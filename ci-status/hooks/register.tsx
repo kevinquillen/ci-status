@@ -25,6 +25,7 @@ const BOOST_MS = 120_000
 const BOOST_DELAY_MS = 3_000
 const IDLE_REDRAW_MS = 30_000
 const BAND_ROWS = 5
+const DOCK_PADDING = 2
 const MAX_RUNS = 10
 const LISTED_RUNS = 40
 const CODE_EVENTS = new Set(['push', 'pull_request', 'pull_request_target', 'merge_group', 'workflow_dispatch', 'workflow_run'])
@@ -422,12 +423,13 @@ export const register: Register = on => {
     const now = Math.max(await read($, clock), current.fetchedAt)
     const refreshButton = <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void poll($)} />
     const closeButton = <Button key="close" label="Close" hotkey="c" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />
+    const paddingX = e.props.placement === 'dock' ? DOCK_PADDING : 0
 
     if (current.phase !== 'ready') {
       const note = current.phase === 'loading' ? 'Loading CI status...' : `CI status unavailable: ${current.problem}`
 
       return (
-        <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column" gap={1} paddingX={paddingX}>
           <Text dimColor>{note}</Text>
           <Box gap={2}>
             {refreshButton}
@@ -440,7 +442,7 @@ export const register: Register = on => {
     const skipped = tally(current.checks).skipped
 
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" paddingX={paddingX}>
         <Box gap={2}>
           <Text dimColor>
             {current.provider ?? 'GitHub'} {current.branch ?? 'detached HEAD'}
