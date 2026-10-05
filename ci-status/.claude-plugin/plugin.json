@@ -1,0 +1,9 @@
+{
+  "name": "ci-status",
+  "version": "0.1.0",
+  "description": "Live GitHub Actions status for the current branch: a status line entry, a band while checks run, and a /ci pane.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Kevin Quillen"
+  }
+}
