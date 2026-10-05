@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { EngineInterface, On, RenderElement } from 'claude-code'
 
-import { formatElapsed, statusText, tally, verdict } from '../hooks/format'
+import { diagnosePrompt, formatElapsed, statusText, tally, verdict } from '../hooks/format'
 import { detectProvider, parseRollup, toState } from '../hooks/github'
 import type { Snapshot } from '../types'
 
@@ -33,11 +33,12 @@ const FINISHED = RUNNING.map(node =>
 /**
  * Stands in for the engine, `git` and `gh`: a repository on branch `feature`
  * whose open pull request #42 reports whatever rollup `github.rollup` holds.
- * Returns the toasts the mod raised and the panes it opened and closed. The footer keeps the engine's own
+ * Returns the toasts the mod raised, the panes it opened and closed, and the
+ * prompts it submitted. The footer keeps the engine's own
  * drawing, the text `engine`, wherever the mod passes.
  */
 const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string }) => {
-  const seen = { toasts: [] as string[], opened: [] as unknown[], closed: [] as string[] }
+  const seen = { toasts: [] as string[], opened: [] as unknown[], closed: [] as string[], prompts: [] as string[] }
   const ok = (stdout: string) => ({
     exitCode: 0,
     stdout,
@@ -52,6 +53,11 @@ const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string
     seen.opened.push(e)
 
     return { value: { isPlaced: true as const } }
+  })
+  on('prompt.submit', ($, e) => {
+    seen.prompts.push(e.text)
+
+    return { text: e.text }
   })
   on('ui.close', ($, e) => {
     seen.closed.push(e.id)
@@ -173,7 +179,7 @@ describe('footer entry', () => {
     github.rollup = FINISHED
     await clock.advance(15_000)
 
-    expect(toasts).toEqual(['CI finished: 1 of 3 checks failed'])
+    expect(toasts).toEqual(['CI finished: 1 of 3 checks failed, /ci diagnose to investigate'])
     expect((await footer($)).text).toContain('PR #42 (draft)  2/3 passed, 1 failed')
   })
 
@@ -327,10 +333,96 @@ describe('drawing', () => {
 
     expect(await ui.findAll({ type: 'Link' })).toHaveLength(4)
     expect(await ui.find({ key: 'open' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Esc closes. Also /ci refresh, /ci open, /ci diagnose. Buttons are clickable in /tui fullscreen.' })).toBeDefined()
     expect(opened).toEqual([{ id: 'ci-status', title: 'CI', columns: 64, closeOnEscape: true }])
 
     await ui.press({ key: 'close' })
     expect(closed).toEqual(['ci-status'])
     await ui.unmount()
+  })
+
+  test('/ci diagnose and the Diagnose button hand the failed checks to Claude', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: RUNNING as unknown[] | null }
+    const { prompts, toasts } = fakeSession(on, github)
+    const command = { command: 'ci', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as const
+    const pane = () =>
+      $.ui.mount({
+        plugin: 'ci-status',
+        surface: 'terminal',
+        component: 'Pane',
+        requestId: 'ci-status',
+        props: { title: 'CI', isFocused: false, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+      })
+
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    expect((await $.command.run({ ...command, args: 'diagnose' })).text).toBe('Asked Claude to diagnose 1 failed check.')
+    await clock.advance(1000)
+    expect(prompts).toEqual([
+      [
+        'CI failed on branch feature for PR #42 (https://github.com/acme/app/pull/42). Failed checks:',
+        '- "unit" in workflow "CI": https://github.com/acme/app/actions/runs/1/job/unit',
+        'Read the log of each failed check, work out why it failed, and report the cause and the fix you propose.',
+        'Do not change any files until I agree to the fix.',
+      ].join('\n'),
+    ])
+
+    const failing = await pane()
+
+    await failing.press({ key: 'diagnose' })
+    await clock.advance(1000)
+    expect(prompts).toHaveLength(2)
+    expect(toasts).toContain('Asked Claude to diagnose 1 failed check.')
+    await failing.unmount()
+
+    github.rollup = [checkRun('lint', 'COMPLETED', 'SUCCESS', '2026-10-05T11:57:00Z')]
+    expect((await $.command.run({ ...command, args: 'diagnose' })).text).toBe('No failed checks to diagnose.')
+    await clock.advance(1000)
+
+    const passing = await pane()
+
+    expect(await passing.find({ key: 'diagnose' })).toBe(undefined)
+    expect(prompts).toHaveLength(2)
+    await passing.unmount()
+  })
+
+  test('names the log command for a job of GitHub Actions', async () => {
+    const [failed] = parseRollup([checkRun('unit', 'COMPLETED', 'FAILURE', '2026-10-05T11:57:00Z')])
+    const snapshot: Snapshot = {
+      phase: 'ready',
+      provider: 'GitHub',
+      branch: 'feature',
+      pullRequest: null,
+      checks: failed === undefined ? [] : [{ ...failed, url: 'https://github.com/acme/app/actions/runs/7/job/99' }],
+      fetchedAt: T0,
+      problem: null,
+    }
+
+    expect(diagnosePrompt(snapshot)).toContain('- "unit" in workflow "CI": gh run view --job 99 --log-failed')
+    expect(diagnosePrompt({ ...snapshot, checks: [] })).toBe(undefined)
+  })
+
+  test('pads the pane on both sides when it is docked beside the transcript', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+
+    fakeSession(on, { rollup: RUNNING })
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    for (const [placement, padding] of [['dock', 2], ['inline', 0]] as const) {
+      const ui = await $.ui.mount({
+        plugin: 'ci-status',
+        surface: 'terminal',
+        component: 'Pane',
+        requestId: 'ci-status',
+        props: { title: 'CI', isFocused: false, bodyColumns: 64, placement, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+      })
+
+      expect((await ui.find({ type: 'Box' }))?.props.paddingX).toBe(padding)
+      expect((await ui.findAll({ type: 'Text', text: 'Esc closes' })).length).toBe(placement === 'inline' ? 1 : 0)
+      await ui.unmount()
+    }
   })
 })
