@@ -1,5 +1,5 @@
 {
-  "name": "github-mod",
+  "name": "ci-status",
   "description": "Mods for Claude Code that show CI status from GitHub.",
   "owner": {
     "name": "Kevin Quillen"
