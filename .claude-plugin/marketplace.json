@@ -1,0 +1,14 @@
+{
+  "name": "github-mod",
+  "description": "Mods for Claude Code that show CI status from GitHub.",
+  "owner": {
+    "name": "Kevin Quillen"
+  },
+  "plugins": [
+    {
+      "name": "ci-status",
+      "source": "./ci-status",
+      "description": "Live GitHub Actions status for the current branch: a status line entry, a band while checks run, and a /ci pane."
+    }
+  ]
+}
