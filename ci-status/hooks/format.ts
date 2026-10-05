@@ -2,6 +2,7 @@ import type { Check, CheckState, Snapshot } from '../types'
 
 export type Tally = Record<CheckState, number> & { total: number }
 
+const RECENT_MS = 30 * 60_000
 const ORDER: readonly CheckState[] = ['failed', 'running', 'queued', 'passed', 'skipped']
 
 /**
@@ -118,33 +119,41 @@ export const pullRequestLabel = (snapshot: Snapshot): string => {
 }
 
 /**
- * The status line entry for a snapshot, or undefined when there is nothing to
- * show (still loading, or the directory is not a GitHub repository).
+ * The footer entry for a snapshot as text, or undefined when there is nothing
+ * worth pinning: no supported repository, or no pull request and no checks
+ * that are running or finished within the last half hour.
  */
 export const statusText = (snapshot: Snapshot, now: number): string | undefined => {
   if (snapshot.phase !== 'ready') {
     return undefined
   }
 
-  const label = pullRequestLabel(snapshot)
+  const provider = snapshot.provider ?? 'GitHub'
+  const label = snapshot.pullRequest === null ? provider : `${provider} ${pullRequestLabel(snapshot)}`
 
   if (snapshot.checks.length === 0) {
-    return `${label}  no checks`
+    return snapshot.pullRequest === null ? undefined : label
   }
 
   if (isActive(snapshot.checks)) {
     const startedAt = runStartedAt(snapshot.checks)
     const elapsed = startedAt === null ? '' : ` ${formatElapsed(now - startedAt)}`
 
-    return `${label}  CI ${tallyText(snapshot.checks)}${elapsed}`
+    return `${label}  ${tallyText(snapshot.checks)}${elapsed}`
   }
 
   const finishes = snapshot.checks.flatMap(check =>
     check.completedAt === null ? [] : [check.completedAt],
   )
-  const ago = finishes.length > 0 ? ` ${formatAgo(now - Math.max(...finishes))}` : ''
+  const finishedAt = finishes.length > 0 ? Math.max(...finishes) : null
+  const ago = finishedAt === null ? '' : ` ${formatAgo(now - finishedAt)}`
+  const isStale = finishedAt === null || now - finishedAt > RECENT_MS
 
-  return `${label}  CI ${tallyText(snapshot.checks)}${ago}`
+  if (snapshot.pullRequest === null && isStale) {
+    return undefined
+  }
+
+  return `${label}  ${tallyText(snapshot.checks)}${ago}`
 }
 
 /** The snapshot as plain text lines, for the /ci reply and surfaces that draw no pane. */
