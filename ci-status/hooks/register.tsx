@@ -423,7 +423,12 @@ export const register: Register = on => {
     const now = Math.max(await read($, clock), current.fetchedAt)
     const refreshButton = <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void poll($)} />
     const closeButton = <Button key="close" label="Close" hotkey="c" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />
+    const isUnclickable = e.surface === 'terminal' && e.props.placement === 'inline'
+    const openCommand = current.pullRequest === null ? '' : ', /ci open'
     const paddingX = e.props.placement === 'dock' ? DOCK_PADDING : 0
+    const layoutHint = isUnclickable && (
+      <Text dimColor>Esc closes. Also /ci refresh{openCommand}. Buttons are clickable in /tui fullscreen.</Text>
+    )
 
     if (current.phase !== 'ready') {
       const note = current.phase === 'loading' ? 'Loading CI status...' : `CI status unavailable: ${current.problem}`
@@ -435,6 +440,7 @@ export const register: Register = on => {
             {refreshButton}
             {closeButton}
           </Box>
+          {layoutHint}
         </Box>
       )
     }
@@ -470,6 +476,7 @@ export const register: Register = on => {
           )}
           {closeButton}
         </Box>
+        {layoutHint}
       </Box>
     )
   })
