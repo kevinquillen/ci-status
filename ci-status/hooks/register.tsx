@@ -113,7 +113,8 @@ const live = {
   finished: new Map<string, Check[]>(),
   pendingPrompt: null as string | null,
   head: undefined as string | null | undefined,
-  upstream: null as string | null,
+  branch: null as string | null,
+  pushed: null as string | null,
   nextRepositoryCheckAt: 0,
   isClaudesRun: false,
   isDiagnosingFailures: false,
@@ -343,28 +344,29 @@ const poll = ($: EngineInterface): Promise<void> => {
  * costs no API request: git tells nobody, so the mod looks.
  *
  * A checkout or a commit moves HEAD, and the status is fetched again at once
- * for the new branch or commit. A push moves the commit the upstream points
- * at: a new run is about to start, so it also holds the active pace and the
- * checks show as GitHub creates them, not a minute later.
+ * for the new branch or commit. A push moves the branch's remote-tracking ref
+ * on origin, or creates it on a first push: a new run is about to start, so
+ * it also holds the active pace and the checks show as GitHub creates them,
+ * not a minute later.
  */
 const watchRepository = async ($: EngineInterface, now: number) => {
-  const [headRead, upstreamRead] = await Promise.all([
-    run($, ['git', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD']),
-    run($, ['git', 'rev-parse', '--verify', '--quiet', '@{upstream}']),
-  ])
+  const headRead = await run($, ['git', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD'])
   const head = headRead.exitCode === 0 ? headRead.stdout.trim() : null
-  const upstream = upstreamRead.exitCode === 0 ? upstreamRead.stdout.trim() : null
+  const branch = head?.split('\n')[1] ?? 'HEAD'
+  const pushedRead = branch === 'HEAD' ? null : await run($, ['git', 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`])
+  const pushed = pushedRead?.exitCode === 0 ? pushedRead.stdout.trim() : null
   const hasHeadMoved = live.head !== undefined && head !== live.head
-  const hasUpstreamMoved = upstream !== null && live.upstream !== null && upstream !== live.upstream
+  const hasPushed = live.head !== undefined && branch === live.branch && pushed !== null && pushed !== live.pushed
 
   live.head = head
-  live.upstream = upstream
+  live.branch = branch
+  live.pushed = pushed
 
-  if (hasUpstreamMoved) {
+  if (hasPushed) {
     live.boostUntil = now + BOOST_MS
   }
 
-  if (hasHeadMoved || hasUpstreamMoved) {
+  if (hasHeadMoved || hasPushed) {
     live.nextPollAt = now
   }
 }
