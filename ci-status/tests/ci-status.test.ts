@@ -328,6 +328,22 @@ describe('footer entry', () => {
     expect((await footer($)).text).toBe('engine')
   })
 
+  test('picks up the first push of a branch that had no remote yet', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: [] as unknown[] | null, upstream: undefined as string | undefined }
+    const { commands } = fakeSession(on, github)
+
+    await $.session.start(SESSION)
+    await clock.advance(10_000)
+    expect(commands).toContain('git rev-parse --verify --quiet refs/remotes/origin/feature')
+
+    github.upstream = 'aaa'
+    await clock.advance(6000)
+    github.rollup = RUNNING
+    await clock.advance(4000)
+    expect((await footer($)).text).toContain('1 running')
+  })
+
   test('fetches again at once after a commit made outside the session', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
     const github = { rollup: [] as unknown[] | null, head: 'abc' }
