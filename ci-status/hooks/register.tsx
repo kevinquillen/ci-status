@@ -5,6 +5,7 @@ import type { Check, CheckState, Snapshot } from '../types'
 import {
   checkDuration,
   diagnosePrompt,
+  failedRuns,
   formatAgo,
   isActive,
   pullRequestLabel,
@@ -140,6 +141,32 @@ const diagnose = ($: EngineInterface): string => {
   const failed = tally(live.latest.checks).failed
 
   return `Asked Claude to diagnose ${failed} failed ${failed === 1 ? 'check' : 'checks'}.`
+}
+
+/**
+ * Re-runs the failed jobs of every GitHub Actions run that has one, and
+ * answers with what was done as a line for the person.
+ */
+const rerun = async ($: EngineInterface): Promise<string> => {
+  const runs = failedRuns(live.latest.checks)
+
+  if (runs.length === 0) {
+    return 'No failed GitHub Actions jobs to re-run.'
+  }
+
+  const results = await Promise.all(runs.map(id => run($, ['gh', 'run', 'rerun', id, '--failed'])))
+  const refused = results.find(result => result.exitCode !== 0)
+
+  if (refused !== undefined) {
+    return `Re-run refused: ${firstLine(refused.stderr)}`
+  }
+
+  const now = await $.clock.now()
+
+  live.boostUntil = now + BOOST_MS
+  live.nextPollAt = now + BOOST_DELAY_MS
+
+  return `Re-running the failed jobs of ${runs.length} ${runs.length === 1 ? 'run' : 'runs'}.`
 }
 
 const run = async ($: EngineInterface, argv: readonly string[]) => {
@@ -355,7 +382,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'ci',
       description: 'Show GitHub Actions checks for the current branch',
-      argumentHint: '[open|refresh|diagnose|close]',
+      argumentHint: '[open|refresh|diagnose|rerun|close]',
       immediate: true,
     })
 
@@ -376,14 +403,18 @@ export const register: Register = on => {
       return { text: 'CI pane closed.' }
     }
 
-    if (action !== '' && action !== 'open' && action !== 'refresh' && action !== 'diagnose') {
-      return { text: 'Usage: /ci [open|refresh|diagnose|close]' }
+    if (!['', 'open', 'refresh', 'diagnose', 'rerun'].includes(action)) {
+      return { text: 'Usage: /ci [open|refresh|diagnose|rerun|close]' }
     }
 
     await poll($)
 
     if (action === 'diagnose') {
       return { text: diagnose($) }
+    }
+
+    if (action === 'rerun') {
+      return { text: await rerun($) }
     }
 
     const now = await $.clock.now()
@@ -492,10 +523,13 @@ export const register: Register = on => {
     const diagnoseButton = tally(current.checks).failed > 0 && (
       <Button key="diagnose" label="Diagnose" hotkey="d" variant="primary" onPress={() => void $.ui.toast(diagnose($))} />
     )
+    const rerunButton = failedRuns(current.checks).length > 0 && (
+      <Button key="rerun" label="Re-run failed" hotkey="f" onPress={() => void rerun($).then(text => $.ui.toast(text))} />
+    )
     const closeButton = <Button key="close" label="Close" hotkey="c" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />
     const isUnclickable = e.surface === 'terminal' && e.props.placement === 'inline'
     const openCommand = current.pullRequest === null ? '' : ', /ci open'
-    const diagnoseCommand = tally(current.checks).failed > 0 ? ', /ci diagnose' : ''
+    const diagnoseCommand = tally(current.checks).failed > 0 ? ', /ci diagnose, /ci rerun' : ''
     const paddingX = e.props.placement === 'dock' ? DOCK_PADDING : 0
     const layoutHint = isUnclickable && (
       <Text dimColor>Esc closes. Also /ci refresh{openCommand}{diagnoseCommand}. Buttons are clickable in /tui fullscreen.</Text>
@@ -547,6 +581,7 @@ export const register: Register = on => {
             />
           )}
           {diagnoseButton}
+          {rerunButton}
           {closeButton}
         </Box>
         {layoutHint}
