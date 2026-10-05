@@ -198,7 +198,7 @@ describe('footer entry', () => {
     github.rollup = FINISHED
     await clock.advance(15_000)
 
-    expect(toasts).toEqual(['CI finished: 1 of 3 checks failed, /ci diagnose to investigate'])
+    expect(toasts).toEqual(['CI finished: 1 failed check, /ci diagnose to investigate'])
     expect((await footer($)).text).toContain('PR #42 (draft)  2/3 passed, 1 failed')
   })
 
@@ -247,6 +247,26 @@ describe('footer entry', () => {
     github.rollup = RUNNING
     await clock.advance(4000)
     expect((await footer($)).text).toContain('1 running')
+  })
+
+  test('words the finishing toast by how many checks there were', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const lint = (status: string) => checkRun('lint', status, status === 'COMPLETED' ? 'SUCCESS' : '', '2026-10-05T11:57:00Z')
+    const unit = (status: string) => checkRun('unit', status, status === 'COMPLETED' ? 'SUCCESS' : '', '2026-10-05T11:57:00Z')
+    const github = { rollup: [lint('IN_PROGRESS')] as unknown[] | null }
+    const { toasts } = fakeSession(on, github)
+
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+    github.rollup = [lint('COMPLETED')]
+    await clock.advance(15_000)
+    expect(toasts.at(-1)).toBe('CI finished: all checks passed')
+
+    github.rollup = [lint('IN_PROGRESS'), unit('IN_PROGRESS')]
+    await clock.advance(70_000)
+    github.rollup = [lint('COMPLETED'), unit('COMPLETED')]
+    await clock.advance(15_000)
+    expect(toasts.at(-1)).toBe('CI finished: all 2 checks passed')
   })
 
   test('shows nothing when gh cannot list runs for the commit', async ($, on) => {
@@ -474,7 +494,7 @@ describe('drawing', () => {
     github.rollup = FINISHED
     await clock.advance(15_000)
 
-    expect(toasts.at(-1)).toBe('CI finished: 1 of 3 checks failed, asking Claude to diagnose')
+    expect(toasts.at(-1)).toBe('CI finished: 1 failed check, asking Claude to diagnose')
     expect(prompts).toHaveLength(1)
     expect(prompts[0]).toContain('- "unit" in workflow "CI"')
   })
