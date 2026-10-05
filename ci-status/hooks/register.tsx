@@ -26,7 +26,7 @@ const ACTIVE_RUNS_POLL_MS = 10_000
 const IDLE_POLL_MS = 60_000
 const BOOST_MS = 120_000
 const BOOST_DELAY_MS = 3_000
-const UPSTREAM_CHECK_MS = 5_000
+const REPOSITORY_CHECK_MS = 5_000
 const IDLE_REDRAW_MS = 30_000
 const BAND_ROWS = 5
 const DOCK_PADDING = 2
@@ -112,8 +112,9 @@ const live = {
   lastRedrawAt: 0,
   finished: new Map<string, Check[]>(),
   pendingPrompt: null as string | null,
+  head: undefined as string | null | undefined,
   upstream: null as string | null,
-  nextUpstreamCheckAt: 0,
+  nextRepositoryCheckAt: 0,
   isClaudesRun: false,
   isDiagnosingFailures: false,
 }
@@ -338,29 +339,40 @@ const poll = ($: EngineInterface): Promise<void> => {
 }
 
 /**
- * Notices a push made outside the session by watching the commit the branch's
- * upstream points at, a local read that costs no API request.
+ * Notices git run outside the session by reading the repository itself, which
+ * costs no API request: git tells nobody, so the mod looks.
  *
- * When it moves, a new run is about to start: polls now and holds the active
- * pace, so the checks show as GitHub creates them, not a minute later.
+ * A checkout or a commit moves HEAD, and the status is fetched again at once
+ * for the new branch or commit. A push moves the commit the upstream points
+ * at: a new run is about to start, so it also holds the active pace and the
+ * checks show as GitHub creates them, not a minute later.
  */
-const watchUpstream = async ($: EngineInterface, now: number) => {
-  const read = await run($, ['git', 'rev-parse', '--verify', '--quiet', '@{upstream}'])
-  const upstream = read.exitCode === 0 ? read.stdout.trim() : null
-  const hasMoved = upstream !== null && live.upstream !== null && upstream !== live.upstream
+const watchRepository = async ($: EngineInterface, now: number) => {
+  const [headRead, upstreamRead] = await Promise.all([
+    run($, ['git', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD']),
+    run($, ['git', 'rev-parse', '--verify', '--quiet', '@{upstream}']),
+  ])
+  const head = headRead.exitCode === 0 ? headRead.stdout.trim() : null
+  const upstream = upstreamRead.exitCode === 0 ? upstreamRead.stdout.trim() : null
+  const hasHeadMoved = live.head !== undefined && head !== live.head
+  const hasUpstreamMoved = upstream !== null && live.upstream !== null && upstream !== live.upstream
 
+  live.head = head
   live.upstream = upstream
 
-  if (hasMoved) {
+  if (hasUpstreamMoved) {
     live.boostUntil = now + BOOST_MS
+  }
+
+  if (hasHeadMoved || hasUpstreamMoved) {
     live.nextPollAt = now
   }
 }
 
 /**
  * Runs every second: moves the clock the footer entry, band and pane draw
- * from, submits a queued prompt, watches for a push, and starts a poll when
- * one is due.
+ * from, submits a queued prompt, watches the repository, and starts a poll
+ * when one is due.
  */
 const tick = async ($: EngineInterface) => {
   const now = await $.clock.now()
@@ -372,9 +384,9 @@ const tick = async ($: EngineInterface) => {
     void $.prompt.submit({ text }).catch(error => $.ui.log(`diagnose failed: ${String(error)}`, { to: 'debug' }))
   }
 
-  if (now >= live.nextUpstreamCheckAt) {
-    live.nextUpstreamCheckAt = now + UPSTREAM_CHECK_MS
-    await watchUpstream($, now)
+  if (now >= live.nextRepositoryCheckAt) {
+    live.nextRepositoryCheckAt = now + REPOSITORY_CHECK_MS
+    await watchRepository($, now)
   }
 
   if (now >= live.nextPollAt) {
