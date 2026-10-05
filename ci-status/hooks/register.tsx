@@ -12,6 +12,7 @@ import {
   summaryText,
   tally,
   tallyText,
+  verdict,
 } from './format'
 import { detectProvider, firstLine, parse, parseJobs, parsePullRequest, parseRollup, parseRun, text } from './github'
 import type { Json } from './github'
@@ -360,20 +361,19 @@ export const register: Register = on => {
     const label = pullRequestLabel(current)
     const cut = href === null ? -1 : line.indexOf(label)
     const modes = e.props.modes.map(mode => `${mode} & `).join('')
-
-    if (cut < 0) {
-      return (
-        <Text dimColor wrap="truncate-end">
-          {modes}CI: {line}
-        </Text>
-      )
-    }
+    const state = verdict(current.checks)
+    const color = state === null ? undefined : COLORS[state]
+    const entry =
+      cut < 0
+        ? [`CI: ${line}`]
+        : [`CI: ${line.slice(0, cut)}`, <Link href={href ?? ''}>{label}</Link>, line.slice(cut + label.length)]
 
     return (
-      <Text dimColor wrap="truncate-end">
-        {modes}CI: {line.slice(0, cut)}
-        <Link href={href ?? ''}>{label}</Link>
-        {line.slice(cut + label.length)}
+      <Text wrap="truncate-end">
+        {modes !== '' && <Text dimColor>{modes}</Text>}
+        <Text color={color} dimColor={color === undefined}>
+          {entry}
+        </Text>
       </Text>
     )
   })
