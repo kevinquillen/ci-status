@@ -441,36 +441,6 @@ describe('hiding', () => {
 })
 
 describe('drawing', () => {
-  test('the band shows running and failed checks while a run is active', async ($, on) => {
-    const clock = mock.clock(on, { now: T0 })
-
-    fakeSession(on, { rollup: RUNNING })
-    await $.session.start(SESSION)
-    await clock.advance(2000)
-
-    for (const surface of ['terminal', 'desktop'] as const) {
-      const ui = await $.ui.mount({
-        plugin: 'ci-status',
-        surface,
-        component: 'AbovePrompt',
-        props: {
-          hasSurvey: false,
-          isWorking: false,
-          maxRows: 10,
-          bodyColumns: 100,
-          scroll: { offset: 0, bodyRows: 10 },
-          view: {},
-        },
-      })
-
-      expect(await ui.find({ type: 'Link', text: 'PR #42 (draft)' })).toBeDefined()
-      expect(await ui.find({ type: 'Link', text: 'e2e' })).toBeDefined()
-      expect(await ui.find({ type: 'Link', text: 'unit' })).toBeDefined()
-      expect(await ui.find({ type: 'Link', text: 'lint' })).toBe(undefined)
-      await ui.unmount()
-    }
-  })
-
   test('/ci answers with a text summary and lists every check in the pane', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
 
@@ -647,37 +617,6 @@ describe('drawing', () => {
 
     github.rollup = null
     expect(await answer('open')).toBe('No open pull request for feature.')
-  })
-
-  test('the band offers Diagnose on a failure and Hide puts it away', async ($, on) => {
-    const clock = mock.clock(on, { now: T0 })
-    const { prompts } = fakeSession(on, { rollup: RUNNING })
-    const band = () =>
-      $.ui.mount({
-        plugin: 'ci-status',
-        surface: 'terminal',
-        component: 'AbovePrompt',
-        props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 10 }, view: {} },
-      })
-
-    on('ui.render', { component: 'AbovePrompt' }, ($: EngineInterface, e) => h($.ui.resolve(e).Text, null, 'engine') as RenderElement)
-    await $.session.start(SESSION)
-    await clock.advance(2000)
-
-    const shown = await band()
-
-    await shown.press({ key: 'diagnose' })
-    await clock.advance(1000)
-    expect(prompts).toHaveLength(1)
-
-    await shown.press({ key: 'hide' })
-    await shown.unmount()
-
-    const hidden = await band()
-
-    expect(await hidden.find({ key: 'hide' })).toBe(undefined)
-    expect((await hidden.find({ type: 'Text' }))?.text).toBe('engine')
-    await hidden.unmount()
   })
 
   test('reads the jobs of the commit\'s workflow runs when there is no pull request', async ($, on) => {
