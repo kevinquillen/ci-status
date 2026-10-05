@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { EngineInterface, On, RenderElement } from 'claude-code'
 
 import { diagnosePrompt, formatElapsed, statusText, tally, verdict } from '../hooks/format'
-import { detectProvider, parseRollup, toState } from '../hooks/github'
+import { detectProvider, parsePullRequest, parseRollup, toState } from '../hooks/github'
 import type { Snapshot } from '../types'
 
 const T0 = Date.parse('2026-10-05T12:00:00Z')
@@ -32,13 +32,21 @@ const FINISHED = RUNNING.map(node =>
 
 /**
  * Stands in for the engine, `git` and `gh`: a repository on branch `feature`
- * whose open pull request #42 reports whatever rollup `github.rollup` holds.
- * Returns the toasts the mod raised, the panes it opened and closed, and the
- * prompts it submitted. The footer keeps the engine's own
+ * whose open pull request #42 reports whatever rollup `github.rollup` holds,
+ * and whose upstream points at `github.upstream` when that is set.
+ * Returns the toasts the mod raised, the panes it opened and closed, the
+ * prompts it submitted and the commands it ran. `github.standing` adds fields
+ * to the pull request, such as its merge state. The footer keeps the engine's own
  * drawing, the text `engine`, wherever the mod passes.
  */
-const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string }) => {
-  const seen = { toasts: [] as string[], opened: [] as unknown[], closed: [] as string[], prompts: [] as string[] }
+const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string; upstream?: string; standing?: object }) => {
+  const seen = {
+    toasts: [] as string[],
+    opened: [] as unknown[],
+    closed: [] as string[],
+    prompts: [] as string[],
+    commands: [] as string[],
+  }
   const ok = (stdout: string) => ({
     exitCode: 0,
     stdout,
@@ -73,6 +81,16 @@ const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string
   on('process.run', ($, e) => {
     const command = e.argv.join(' ')
 
+    seen.commands.push(command)
+
+    if (command.startsWith('gh run rerun')) {
+      return { value: ok('') }
+    }
+
+    if (command.startsWith('git rev-parse --verify') && github.upstream !== undefined) {
+      return { value: ok(`${github.upstream}\n`) }
+    }
+
     if (command.startsWith('git rev-parse --abbrev-ref')) {
       return { value: ok('feature\n') }
     }
@@ -89,6 +107,7 @@ const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string
         isDraft: true,
         state: 'OPEN',
         statusCheckRollup: github.rollup,
+        ...github.standing,
       }
 
       return { value: ok(JSON.stringify(pullRequest)) }
@@ -214,6 +233,22 @@ describe('footer entry', () => {
     expect(await drawn()).toEqual({ color: undefined, isDim: true, areModesDim: true })
   })
 
+  test('picks up a push made outside the session within seconds', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: [] as unknown[] | null, upstream: 'aaa' }
+
+    fakeSession(on, github)
+    await $.session.start(SESSION)
+    await clock.advance(10_000)
+    expect((await footer($)).text).toMatch(/PR #42 \(draft\)$/)
+
+    github.upstream = 'bbb'
+    await clock.advance(6000)
+    github.rollup = RUNNING
+    await clock.advance(4000)
+    expect((await footer($)).text).toContain('1 running')
+  })
+
   test('shows nothing when gh cannot list runs for the commit', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
 
@@ -235,7 +270,7 @@ describe('hiding', () => {
     fetchedAt: T0,
     problem: null,
   }
-  const pullRequest = { number: 7, url: 'https://github.com/acme/app/pull/7', title: 'Fix', isDraft: false }
+  const pullRequest = { number: 7, url: 'https://github.com/acme/app/pull/7', title: 'Fix', isDraft: false, merge: null, review: null }
   const passed = parseRollup([checkRun('lint', 'COMPLETED', 'SUCCESS', '2026-10-05T11:57:00Z')])
 
   test('names the hosting service from the remote URL', async () => {
@@ -249,6 +284,20 @@ describe('hiding', () => {
     expect(statusText(quiet, T0)).toBe(undefined)
     expect(statusText({ ...quiet, checks: passed }, T0 + 5 * 60_000)).toBe('GitHub  1/1 passed 6m ago')
     expect(statusText({ ...quiet, checks: passed }, T0 + 60 * 60_000)).toBe(undefined)
+  })
+
+  test('adds the review and merge standing of the pull request', async () => {
+    const standing = (fields: object) => parsePullRequest({ number: 7, url: pullRequest.url, title: 'Fix', ...fields })
+
+    expect(standing({ mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED' })).toMatchObject({ merge: 'ready', review: 'approved' })
+    expect(standing({ mergeStateStatus: 'BLOCKED', mergeable: 'CONFLICTING' }).merge).toBe('conflicts')
+    expect(standing({ mergeStateStatus: 'UNKNOWN', reviewDecision: '' })).toMatchObject({ merge: null, review: null })
+
+    const approved = { ...quiet, pullRequest: { ...pullRequest, merge: 'ready', review: 'approved' } } as const
+    const blocked = { ...quiet, pullRequest: { ...pullRequest, merge: 'blocked', review: 'changes requested' }, checks: passed } as const
+
+    expect(statusText(approved, T0)).toBe('GitHub PR #7  approved, ready to merge')
+    expect(statusText(blocked, T0 + 60 * 60_000)).toBe('GitHub PR #7  1/1 passed 1h ago  changes requested, merge blocked')
   })
 
   test('keeps a pull request pinned even with no checks', async () => {
@@ -333,7 +382,7 @@ describe('drawing', () => {
 
     expect(await ui.findAll({ type: 'Link' })).toHaveLength(4)
     expect(await ui.find({ key: 'open' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'Esc closes. Also /ci refresh, /ci open, /ci diagnose. Buttons are clickable in /tui fullscreen.' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Esc closes. Also /ci refresh, /ci open, /ci diagnose, /ci rerun. Buttons are clickable in /tui fullscreen.' })).toBeDefined()
     expect(opened).toEqual([{ id: 'ci-status', title: 'CI', columns: 64, closeOnEscape: true }])
 
     await ui.press({ key: 'close' })
@@ -386,6 +435,48 @@ describe('drawing', () => {
     expect(await passing.find({ key: 'diagnose' })).toBe(undefined)
     expect(prompts).toHaveLength(2)
     await passing.unmount()
+  })
+
+  test('/ci rerun re-runs the failed jobs and says when there are none', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: FINISHED as unknown[] | null, standing: { mergeStateStatus: 'BLOCKED', reviewDecision: 'REVIEW_REQUIRED' } }
+    const { commands } = fakeSession(on, github)
+    const command = { command: 'ci', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as const
+
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    const summary = await $.command.run({ ...command, args: 'refresh' })
+
+    expect(summary.text).toContain('review required, merge blocked')
+    expect((await $.command.run({ ...command, args: 'rerun' })).text).toBe('Re-running the failed jobs of 1 run.')
+    expect(commands).toContain('gh run rerun 1 --failed')
+
+    github.rollup = [checkRun('lint', 'COMPLETED', 'SUCCESS', '2026-10-05T11:57:00Z')]
+    expect((await $.command.run({ ...command, args: 'rerun' })).text).toBe('No failed GitHub Actions jobs to re-run.')
+  })
+
+  test('diagnoses a failed run by itself only after a push Claude made, when turned on', { options: { diagnoseOnFailure: true } }, async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: RUNNING as unknown[] | null }
+    const { prompts, toasts } = fakeSession(on, github)
+
+    on('tool.call', () => ({ result: '', text: '' }))
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+    github.rollup = FINISHED
+    await clock.advance(15_000)
+    expect(prompts).toHaveLength(0)
+
+    github.rollup = RUNNING
+    await $.tool.call({ tool: 'Bash', command: 'git push origin feature' })
+    await clock.advance(15_000)
+    github.rollup = FINISHED
+    await clock.advance(15_000)
+
+    expect(toasts.at(-1)).toBe('CI finished: 1 of 3 checks failed, asking Claude to diagnose')
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toContain('- "unit" in workflow "CI"')
   })
 
   test('names the log command for a job of GitHub Actions', async () => {
