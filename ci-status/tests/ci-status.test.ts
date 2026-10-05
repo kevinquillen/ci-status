@@ -1,8 +1,9 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { Engine } from 'claude-code/testing'
+import type { EngineInterface, On, RenderElement } from 'claude-code'
 
 import { formatElapsed, statusText, tally } from '../hooks/format'
-import { parseRollup, toState } from '../hooks/github'
+import { detectProvider, parseRollup, toState } from '../hooks/github'
 import type { Snapshot } from '../types'
 
 const T0 = Date.parse('2026-10-05T12:00:00Z')
@@ -32,10 +33,11 @@ const FINISHED = RUNNING.map(node =>
 /**
  * Stands in for the engine, `git` and `gh`: a repository on branch `feature`
  * whose open pull request #42 reports whatever rollup `github.rollup` holds.
- * Returns the status line texts and toasts the mod raised.
+ * Returns the toasts the mod raised. The footer keeps the engine's own
+ * drawing, the text `engine`, wherever the mod passes.
  */
-const fakeSession = (on: On, github: { rollup: unknown[] | null }) => {
-  const seen = { lines: [] as (string | undefined)[], toasts: [] as string[] }
+const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string }) => {
+  const seen = { toasts: [] as string[] }
   const ok = (stdout: string) => ({
     exitCode: 0,
     stdout,
@@ -47,11 +49,7 @@ const fakeSession = (on: On, github: { rollup: unknown[] | null }) => {
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true as const } }))
-  on('ui.status', ($, e) => {
-    seen.lines.push(e.text)
-
-    return { value: undefined }
-  })
+  on('ui.render', { component: 'SessionMode' }, ($: EngineInterface, e) => h($.ui.resolve(e).Text, null, 'engine') as RenderElement)
   on('ui.toast', ($, e) => {
     seen.toasts.push(e.text)
 
@@ -62,6 +60,10 @@ const fakeSession = (on: On, github: { rollup: unknown[] | null }) => {
 
     if (command.startsWith('git rev-parse --abbrev-ref')) {
       return { value: ok('feature\n') }
+    }
+
+    if (command.startsWith('git remote get-url')) {
+      return { value: ok(`${github.remote ?? 'git@github.com:acme/app.git'}\n`) }
     }
 
     if (command.startsWith('gh pr view --json') && github.rollup !== null) {
@@ -83,6 +85,16 @@ const fakeSession = (on: On, github: { rollup: unknown[] | null }) => {
   return seen
 }
 
+/** What the prompt footer shows: its text, and the link inside it if any. */
+const footer = async ($: Engine) => {
+  const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
+  const shown = { text: (await ui.find({ type: 'Text' }))?.text, link: await ui.find({ type: 'Link' }) }
+
+  await ui.unmount()
+
+  return shown
+}
+
 describe('formatting', () => {
   test('maps GitHub statuses onto check states', async () => {
     expect(toState('IN_PROGRESS', '')).toBe('running')
@@ -102,6 +114,7 @@ describe('formatting', () => {
   test('shows nothing outside a GitHub repository', async () => {
     const snapshot: Snapshot = {
       phase: 'unavailable',
+      provider: null,
       branch: null,
       pullRequest: null,
       checks: [],
@@ -113,23 +126,28 @@ describe('formatting', () => {
   })
 })
 
-describe('status line', () => {
-  test('shows the pull request, the tally and a ticking elapsed time', async ($, on) => {
+describe('footer entry', () => {
+  test('shows the linked pull request, the tally and a ticking elapsed time', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
-    const { lines } = fakeSession(on, { rollup: RUNNING })
+
+    fakeSession(on, { rollup: RUNNING })
 
     await $.session.start(SESSION)
     await clock.advance(2000)
-    expect(lines.at(-1)).toBe('PR #42 (draft)  CI 1/3 passed, 1 failed, 1 running 02:07')
+
+    const first = await footer($)
+
+    expect(first.text).toMatch(/^focus & CI: GitHub .*PR #42 \(draft\)  1\/3 passed, 1 failed, 1 running 02:07$/)
+    expect(first.link?.text).toContain('PR #42 (draft)')
 
     await clock.advance(1000)
-    expect(lines.at(-1)).toBe('PR #42 (draft)  CI 1/3 passed, 1 failed, 1 running 02:08')
+    expect((await footer($)).text).toContain('1 running 02:08')
   })
 
   test('toasts once when the run finishes', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
     const github = { rollup: RUNNING as unknown[] | null }
-    const { lines, toasts } = fakeSession(on, github)
+    const { toasts } = fakeSession(on, github)
 
     await $.session.start(SESSION)
     await clock.advance(2000)
@@ -137,17 +155,59 @@ describe('status line', () => {
     await clock.advance(15_000)
 
     expect(toasts).toEqual(['CI finished: 1 of 3 checks failed'])
-    expect(lines.at(-1)).toMatch(/^PR #42 \(draft\)  CI 2\/3 passed, 1 failed/)
+    expect((await footer($)).text).toContain('PR #42 (draft)  2/3 passed, 1 failed')
   })
 
   test('shows nothing when gh cannot list runs for the commit', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
-    const { lines } = fakeSession(on, { rollup: null })
 
+    fakeSession(on, { rollup: null })
     await $.session.start(SESSION)
     await clock.advance(3000)
 
-    expect(lines.filter(line => line !== undefined)).toEqual([])
+    expect((await footer($)).text).toBe('engine')
+  })
+})
+
+describe('hiding', () => {
+  const quiet: Snapshot = {
+    phase: 'ready',
+    provider: 'GitHub',
+    branch: 'feature',
+    pullRequest: null,
+    checks: [],
+    fetchedAt: T0,
+    problem: null,
+  }
+  const pullRequest = { number: 7, url: 'https://github.com/acme/app/pull/7', title: 'Fix', isDraft: false }
+  const passed = parseRollup([checkRun('lint', 'COMPLETED', 'SUCCESS', '2026-10-05T11:57:00Z')])
+
+  test('names the hosting service from the remote URL', async () => {
+    expect(detectProvider('git@github.com:acme/app.git')).toBe('GitHub')
+    expect(detectProvider('https://gitlab.example.com/acme/app.git')).toBe('GitLab')
+    expect(detectProvider('ssh://git@bitbucket.org/acme/app.git')).toBe('Bitbucket')
+    expect(detectProvider('https://git.example.com/github/app.git')).toBe(null)
+  })
+
+  test('shows nothing without a pull request or recent checks', async () => {
+    expect(statusText(quiet, T0)).toBe(undefined)
+    expect(statusText({ ...quiet, checks: passed }, T0 + 5 * 60_000)).toBe('GitHub  1/1 passed 6m ago')
+    expect(statusText({ ...quiet, checks: passed }, T0 + 60 * 60_000)).toBe(undefined)
+  })
+
+  test('keeps a pull request pinned even with no checks', async () => {
+    expect(statusText({ ...quiet, pullRequest }, T0)).toBe('GitHub PR #7')
+    expect(statusText({ ...quiet, pullRequest, checks: passed }, T0 + 60 * 60_000)).toBe('GitHub PR #7  1/1 passed 1h ago')
+  })
+
+  test('shows nothing for a repository hosted elsewhere', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+
+    fakeSession(on, { rollup: RUNNING, remote: 'git@gitlab.com:acme/app.git' })
+    await $.session.start(SESSION)
+    await clock.advance(3000)
+
+    expect((await footer($)).text).toBe('engine')
   })
 })
 
