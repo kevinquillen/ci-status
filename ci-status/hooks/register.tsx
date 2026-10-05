@@ -13,7 +13,7 @@ import {
   tally,
   tallyText,
 } from './format'
-import { firstLine, parse, parseJobs, parsePullRequest, parseRollup, parseRun, text } from './github'
+import { detectProvider, firstLine, parse, parseJobs, parsePullRequest, parseRollup, parseRun, text } from './github'
 import type { Json } from './github'
 
 const PANE = 'ci-status'
@@ -30,6 +30,7 @@ const TRIGGERS = /\bgit\s+push\b|\bgh\s+pr\s+(create|ready|merge)\b|\bgh\s+(run\
 
 const EMPTY: Snapshot = {
   phase: 'loading',
+  provider: null,
   branch: null,
   pullRequest: null,
   checks: [],
@@ -98,7 +99,6 @@ const pullRequestLine = (ui: ElementTable, current: Snapshot) => {
 
 const live = {
   latest: EMPTY,
-  shownStatus: undefined as string | undefined,
   inFlight: null as Promise<void> | null,
   nextPollAt: 0,
   boostUntil: 0,
@@ -138,13 +138,16 @@ const jobsOf = async ($: EngineInterface, workflowRun: Json): Promise<Check[]> =
 /**
  * Fetches CI state for the session's branch through `git` and `gh`.
  *
+ * Only GitHub is read: a remote on another known host answers unavailable.
  * With an open pull request, its check rollup is the source (third-party
  * checks included). Without one, the jobs of the workflow runs on the head
  * commit are.
  */
 const fetchSnapshot = async ($: EngineInterface, now: number): Promise<Snapshot> => {
-  const base = { pullRequest: null, checks: [], fetchedAt: now, problem: null }
   const head = await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+  const remote = await run($, ['git', 'remote', 'get-url', 'origin'])
+  const provider = remote.exitCode === 0 ? detectProvider(remote.stdout) : null
+  const base = { provider, pullRequest: null, checks: [], fetchedAt: now, problem: null }
 
   if (head.exitCode !== 0) {
     return { ...base, phase: 'unavailable', branch: null, problem: 'not a git repository' }
@@ -152,6 +155,10 @@ const fetchSnapshot = async ($: EngineInterface, now: number): Promise<Snapshot>
 
   const name = head.stdout.trim()
   const branch = name === 'HEAD' ? null : name
+
+  if (provider !== null && provider !== 'GitHub') {
+    return { ...base, phase: 'unavailable', branch, problem: `${provider} is not supported yet` }
+  }
   const viewed = await run($, ['gh', 'pr', 'view', '--json', 'number,url,title,isDraft,state,statusCheckRollup'])
   const pullRequest = viewed.exitCode === 0 ? (parse(viewed.stdout) as Json | null) : null
 
@@ -245,7 +252,7 @@ const refresh = async ($: EngineInterface) => {
 /** Refetches from GitHub; callers during a fetch share the one in flight. */
 const poll = ($: EngineInterface): Promise<void> => {
   live.inFlight ??= refresh($)
-    .catch(() => undefined)
+    .catch(error => $.ui.log(`refresh failed: ${String(error)}`, { to: 'debug' }))
     .finally(() => {
       live.inFlight = null
     })
@@ -254,8 +261,8 @@ const poll = ($: EngineInterface): Promise<void> => {
 }
 
 /**
- * Runs every second: repaints the status line when its text changes, moves
- * the clock the band and pane draw from, and starts a poll when one is due.
+ * Runs every second: moves the clock the footer entry, band and pane draw
+ * from, and starts a poll when one is due.
  */
 const tick = async ($: EngineInterface) => {
   const now = await $.clock.now()
@@ -263,13 +270,6 @@ const tick = async ($: EngineInterface) => {
   if (now >= live.nextPollAt) {
     live.nextPollAt = now + ACTIVE_POLL_MS
     void poll($)
-  }
-
-  const status = statusText(live.latest, now)
-
-  if (status !== live.shownStatus) {
-    live.shownStatus = status
-    $.ui.status(status)
   }
 
   const redrawEvery = isActive(live.latest.checks) ? 1000 : IDLE_REDRAW_MS
@@ -285,7 +285,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'ci',
       description: 'Show GitHub Actions checks for the current branch',
-      argumentHint: '[open|refresh]',
+      argumentHint: '[open|refresh|close]',
       immediate: true,
     })
 
@@ -300,8 +300,14 @@ export const register: Register = on => {
   on('command.run', { command: 'ci' }, async ($, e) => {
     const action = e.args.trim()
 
+    if (action === 'close') {
+      await $.ui.close({ id: PANE })
+
+      return { text: 'CI pane closed.' }
+    }
+
     if (action !== '' && action !== 'open' && action !== 'refresh') {
-      return { text: 'Usage: /ci [open|refresh]' }
+      return { text: 'Usage: /ci [open|refresh|close]' }
     }
 
     await poll($)
@@ -338,6 +344,38 @@ export const register: Register = on => {
     }
 
     return ran
+  })
+
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    const current = await read($, snapshot)
+    const now = Math.max(await read($, clock), current.fetchedAt)
+    const line = statusText(current, now)
+
+    if (line === undefined) {
+      return next(e)
+    }
+
+    const { Link, Text } = $.ui.resolve(e)
+    const href = safeHref(current.pullRequest?.url ?? null)
+    const label = pullRequestLabel(current)
+    const cut = href === null ? -1 : line.indexOf(label)
+    const modes = e.props.modes.map(mode => `${mode} & `).join('')
+
+    if (cut < 0) {
+      return (
+        <Text dimColor wrap="truncate-end">
+          {modes}CI: {line}
+        </Text>
+      )
+    }
+
+    return (
+      <Text dimColor wrap="truncate-end">
+        {modes}CI: {line.slice(0, cut)}
+        <Link href={href ?? ''}>{label}</Link>
+        {line.slice(cut + label.length)}
+      </Text>
+    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -392,7 +430,9 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         <Box gap={2}>
-          <Text dimColor>{current.branch ?? 'detached HEAD'}</Text>
+          <Text dimColor>
+            {current.provider ?? 'GitHub'} {current.branch ?? 'detached HEAD'}
+          </Text>
           {pullRequestLine(ui, current)}
         </Box>
         {current.pullRequest !== null && <Text wrap="truncate-end">{current.pullRequest.title}</Text>}
