@@ -114,6 +114,8 @@ const live = {
   pendingPrompt: null as string | null,
   upstream: null as string | null,
   nextUpstreamCheckAt: 0,
+  isClaudesRun: false,
+  isDiagnosingFailures: false,
 }
 
 /**
@@ -264,7 +266,12 @@ const fetchSnapshot = async ($: EngineInterface, now: number): Promise<Snapshot>
   return { ...base, phase: 'ready', branch, checks: checks.flat() }
 }
 
-/** Toasts when a check newly fails mid-run and when the whole run finishes. */
+/**
+ * Toasts when a check newly fails mid-run and when the whole run finishes.
+ *
+ * A run that fails after Claude pushed is also handed to Claude to diagnose,
+ * when the person turned that on.
+ */
 const announce = ($: EngineInterface, before: Snapshot, after: Snapshot) => {
   if (before.phase !== 'ready' || after.phase !== 'ready' || before.branch !== after.branch) {
     return
@@ -273,8 +280,12 @@ const announce = ($: EngineInterface, before: Snapshot, after: Snapshot) => {
   const counts = tally(after.checks)
 
   if (isActive(before.checks) && !isActive(after.checks) && after.checks.length > 0) {
-    const verdict = counts.failed > 0 ? `${counts.failed} of ${counts.total} checks failed, /ci diagnose to investigate` : `all ${counts.total} checks passed`
+    const isDiagnosing = counts.failed > 0 && live.isClaudesRun && live.isDiagnosingFailures
+    const followUp = isDiagnosing ? 'asking Claude to diagnose' : '/ci diagnose to investigate'
+    const verdict = counts.failed > 0 ? `${counts.failed} of ${counts.total} checks failed, ${followUp}` : `all ${counts.total} checks passed`
 
+    live.isClaudesRun = false
+    live.pendingPrompt = isDiagnosing ? (diagnosePrompt(after) ?? null) : live.pendingPrompt
     $.ui.toast(`CI finished: ${verdict}`, { timeoutMs: 8000 })
 
     return
@@ -377,7 +388,9 @@ const tick = async ($: EngineInterface) => {
   }
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  live.isDiagnosingFailures = options.diagnoseOnFailure === true
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'ci',
@@ -446,6 +459,7 @@ export const register: Register = on => {
 
       live.boostUntil = now + BOOST_MS
       live.nextPollAt = now + BOOST_DELAY_MS
+      live.isClaudesRun = true
     }
 
     return ran
