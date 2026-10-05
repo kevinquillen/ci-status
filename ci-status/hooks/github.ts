@@ -1,4 +1,4 @@
-import type { Check, CheckState, PullRequest } from '../types'
+import type { Check, CheckState, MergeState, PullRequest, ReviewState } from '../types'
 
 export type Json = Record<string, unknown>
 
@@ -116,12 +116,41 @@ export const parseJobs = (workflow: string, jobs: unknown): Check[] => {
   }))
 }
 
+const MERGE_STATES: Readonly<Record<string, MergeState>> = {
+  CLEAN: 'ready',
+  HAS_HOOKS: 'ready',
+  UNSTABLE: 'unstable',
+  BLOCKED: 'blocked',
+  BEHIND: 'behind',
+  DIRTY: 'conflicts',
+}
+
+const REVIEW_STATES: Readonly<Record<string, ReviewState>> = {
+  APPROVED: 'approved',
+  CHANGES_REQUESTED: 'changes requested',
+  REVIEW_REQUIRED: 'review required',
+}
+
+/**
+ * Maps GitHub's `mergeStateStatus` and `mergeable` onto one merge state, or
+ * null while GitHub has not worked it out or the pull request is a draft.
+ */
+export const toMergeState = (status: unknown, mergeable: unknown): MergeState | null => {
+  if (text(mergeable).toUpperCase() === 'CONFLICTING') {
+    return 'conflicts'
+  }
+
+  return MERGE_STATES[text(status).toUpperCase()] ?? null
+}
+
 /** Reads the pull request fields out of `gh pr view --json`. */
 export const parsePullRequest = (data: Json): PullRequest => ({
   number: Number(data.number),
   url: text(data.url),
   title: clean(data.title),
   isDraft: data.isDraft === true,
+  merge: toMergeState(data.mergeStateStatus, data.mergeable),
+  review: REVIEW_STATES[text(data.reviewDecision).toUpperCase()] ?? null,
 })
 
 /**

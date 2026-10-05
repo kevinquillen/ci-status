@@ -9,11 +9,17 @@ export type Check = {
   url: string | null
 }
 
+export type MergeState = 'ready' | 'unstable' | 'blocked' | 'behind' | 'conflicts'
+
+export type ReviewState = 'approved' | 'changes requested' | 'review required'
+
 export type PullRequest = {
   number: number
   url: string
   title: string
   isDraft: boolean
+  merge: MergeState | null
+  review: ReviewState | null
 }
 
 export type Snapshot = {

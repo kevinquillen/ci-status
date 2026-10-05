@@ -8,6 +8,7 @@ import {
   formatAgo,
   isActive,
   pullRequestLabel,
+  pullRequestState,
   sortChecks,
   statusText,
   summaryText,
@@ -194,7 +195,7 @@ const fetchSnapshot = async ($: EngineInterface, now: number): Promise<Snapshot>
   if (provider !== null && provider !== 'GitHub') {
     return { ...base, phase: 'unavailable', branch, problem: `${provider} is not supported yet` }
   }
-  const viewed = await run($, ['gh', 'pr', 'view', '--json', 'number,url,title,isDraft,state,statusCheckRollup'])
+  const viewed = await run($, ['gh', 'pr', 'view', '--json', 'number,url,title,isDraft,state,statusCheckRollup,mergeStateStatus,mergeable,reviewDecision'])
   const pullRequest = viewed.exitCode === 0 ? (parse(viewed.stdout) as Json | null) : null
 
   if (pullRequest !== null && pullRequest.state === 'OPEN') {
@@ -526,6 +527,7 @@ export const register: Register = on => {
           {pullRequestLine(ui, current)}
         </Box>
         {current.pullRequest !== null && <Text wrap="truncate-end">{current.pullRequest.title}</Text>}
+        {pullRequestState(current) !== '' && <Text dimColor>{pullRequestState(current)}</Text>}
         <Box gap={2} marginY={1}>
           <Text>{current.checks.length === 0 ? 'No checks for this commit.' : tallyText(current.checks)}</Text>
           <Text dimColor>updated {formatAgo(now - current.fetchedAt)}</Text>

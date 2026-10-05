@@ -1,9 +1,16 @@
-import type { Check, CheckState, Snapshot } from '../types'
+import type { Check, CheckState, MergeState, Snapshot } from '../types'
 
 export type Tally = Record<CheckState, number> & { total: number }
 
 const RECENT_MS = 30 * 60_000
 const ORDER: readonly CheckState[] = ['failed', 'running', 'queued', 'passed', 'skipped']
+const MERGE_TEXT: Readonly<Record<MergeState, string>> = {
+  ready: 'ready to merge',
+  unstable: 'mergeable',
+  blocked: 'merge blocked',
+  behind: 'behind base',
+  conflicts: 'conflicts',
+}
 
 /**
  * Counts checks by state. Skipped checks are counted but left out of `total`,
@@ -138,6 +145,18 @@ export const pullRequestLabel = (snapshot: Snapshot): string => {
 }
 
 /**
+ * Where the pull request stands with reviewers and with merging, such as
+ * "approved, ready to merge"; empty when there is no pull request or GitHub
+ * reports neither.
+ */
+export const pullRequestState = (snapshot: Snapshot): string => {
+  const review = snapshot.pullRequest?.review ?? null
+  const merge = snapshot.pullRequest?.merge ?? null
+
+  return [review, merge === null ? null : MERGE_TEXT[merge]].filter(part => part !== null).join(', ')
+}
+
+/**
  * The footer entry for a snapshot as text, or undefined when there is nothing
  * worth pinning: no supported repository, or no pull request and no checks
  * that are running or finished within the last half hour.
@@ -149,16 +168,18 @@ export const statusText = (snapshot: Snapshot, now: number): string | undefined 
 
   const provider = snapshot.provider ?? 'GitHub'
   const label = snapshot.pullRequest === null ? provider : `${provider} ${pullRequestLabel(snapshot)}`
+  const state = pullRequestState(snapshot)
+  const standing = state === '' ? '' : `  ${state}`
 
   if (snapshot.checks.length === 0) {
-    return snapshot.pullRequest === null ? undefined : label
+    return snapshot.pullRequest === null ? undefined : `${label}${standing}`
   }
 
   if (isActive(snapshot.checks)) {
     const startedAt = runStartedAt(snapshot.checks)
     const elapsed = startedAt === null ? '' : ` ${formatElapsed(now - startedAt)}`
 
-    return `${label}  ${tallyText(snapshot.checks)}${elapsed}`
+    return `${label}  ${tallyText(snapshot.checks)}${elapsed}${standing}`
   }
 
   const finishes = snapshot.checks.flatMap(check =>
@@ -172,7 +193,7 @@ export const statusText = (snapshot: Snapshot, now: number): string | undefined 
     return undefined
   }
 
-  return `${label}  ${tallyText(snapshot.checks)}${ago}`
+  return `${label}  ${tallyText(snapshot.checks)}${ago}${standing}`
 }
 
 /**
@@ -217,6 +238,11 @@ export const summaryText = (snapshot: Snapshot, now: number): string => {
   const pullRequest = snapshot.pullRequest
   const head = pullRequest === null ? 'no PR' : `${pullRequestLabel(snapshot)} ${pullRequest.url}`
   const lines = [`${snapshot.branch ?? 'detached HEAD'}: ${head}`]
+  const state = pullRequestState(snapshot)
+
+  if (state !== '') {
+    lines.push(state)
+  }
 
   if (snapshot.checks.length === 0) {
     return [...lines, 'No checks found for this commit.'].join('\n')
