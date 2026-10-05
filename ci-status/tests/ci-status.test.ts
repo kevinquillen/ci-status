@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { EngineInterface, On, RenderElement } from 'claude-code'
 
-import { formatElapsed, statusText, tally } from '../hooks/format'
+import { formatElapsed, statusText, tally, verdict } from '../hooks/format'
 import { detectProvider, parseRollup, toState } from '../hooks/github'
 import type { Snapshot } from '../types'
 
@@ -111,6 +111,16 @@ describe('formatting', () => {
     expect(formatElapsed(3_792_000)).toBe('1:03:12')
   })
 
+  test('colors by the worst state: failed, then running, then passed', async () => {
+    const lint = checkRun('lint', 'COMPLETED', 'SUCCESS', '2026-10-05T11:57:00Z')
+    const e2e = checkRun('e2e', 'QUEUED', '', '2026-10-05T11:57:55Z')
+
+    expect(verdict(parseRollup(RUNNING))).toBe('failed')
+    expect(verdict(parseRollup([lint, e2e]))).toBe('running')
+    expect(verdict(parseRollup([lint]))).toBe('passed')
+    expect(verdict([])).toBe(null)
+  })
+
   test('shows nothing outside a GitHub repository', async () => {
     const snapshot: Snapshot = {
       phase: 'unavailable',
@@ -156,6 +166,37 @@ describe('footer entry', () => {
 
     expect(toasts).toEqual(['CI finished: 1 of 3 checks failed'])
     expect((await footer($)).text).toContain('PR #42 (draft)  2/3 passed, 1 failed')
+  })
+
+  test('lights the entry red, yellow or green and leaves the mode labels dim', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: RUNNING as unknown[] | null }
+    const drawn = async () => {
+      const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
+      const entry = await ui.find({ type: 'Text', text: /^CI: / })
+      const modes = await ui.find({ type: 'Text', text: /^focus & $/ })
+
+      await ui.unmount()
+
+      return { color: entry?.props.color, isDim: entry?.props.dimColor, areModesDim: modes?.props.dimColor }
+    }
+
+    fakeSession(on, github)
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+    expect(await drawn()).toEqual({ color: 'red', isDim: false, areModesDim: true })
+
+    github.rollup = RUNNING.filter(node => node.name !== 'unit')
+    await clock.advance(15_000)
+    expect((await drawn()).color).toBe('yellow')
+
+    github.rollup = [checkRun('lint', 'COMPLETED', 'SUCCESS', '2026-10-05T11:57:00Z')]
+    await clock.advance(15_000)
+    expect((await drawn()).color).toBe('green')
+
+    github.rollup = []
+    await clock.advance(60_000)
+    expect(await drawn()).toEqual({ color: undefined, isDim: true, areModesDim: true })
   })
 
   test('shows nothing when gh cannot list runs for the commit', async ($, on) => {
