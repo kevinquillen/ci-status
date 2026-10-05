@@ -18,6 +18,7 @@ export type PullRequest = {
 
 export type Snapshot = {
   phase: 'loading' | 'ready' | 'unavailable'
+  provider: string | null
   branch: string | null
   pullRequest: PullRequest | null
   checks: Check[]
