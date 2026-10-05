@@ -175,6 +175,35 @@ export const statusText = (snapshot: Snapshot, now: number): string | undefined 
   return `${label}  ${tallyText(snapshot.checks)}${ago}`
 }
 
+/**
+ * The prompt that asks Claude to diagnose the failed checks, or undefined when
+ * none failed. It names each failed check and how to read its log, and leaves
+ * the fetching to Claude so a long log is not pasted into the conversation.
+ */
+export const diagnosePrompt = (snapshot: Snapshot): string | undefined => {
+  const failed = sortChecks(snapshot.checks).filter(check => check.state === 'failed')
+
+  if (failed.length === 0) {
+    return undefined
+  }
+
+  const pullRequest = snapshot.pullRequest
+  const where = pullRequest === null ? '' : ` for PR #${pullRequest.number} (${pullRequest.url})`
+  const lines = failed.map(check => {
+    const job = /\/actions\/runs\/\d+\/job\/(\d+)/.exec(check.url ?? '')?.[1]
+    const log = job === undefined ? (check.url ?? 'no link') : `gh run view --job ${job} --log-failed`
+
+    return `- "${check.name}" in workflow "${check.workflow}": ${log}`
+  })
+
+  return [
+    `CI failed on branch ${snapshot.branch ?? 'detached HEAD'}${where}. Failed checks:`,
+    ...lines,
+    'Read the log of each failed check, work out why it failed, and report the cause and the fix you propose.',
+    'Do not change any files until I agree to the fix.',
+  ].join('\n')
+}
+
 /** The snapshot as plain text lines, for the /ci reply and surfaces that draw no pane. */
 export const summaryText = (snapshot: Snapshot, now: number): string => {
   if (snapshot.phase === 'loading') {

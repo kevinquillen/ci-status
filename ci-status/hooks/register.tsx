@@ -4,6 +4,7 @@ import type { ElementTable, EngineInterface, Register } from 'claude-code'
 import type { Check, CheckState, Snapshot } from '../types'
 import {
   checkDuration,
+  diagnosePrompt,
   formatAgo,
   isActive,
   pullRequestLabel,
@@ -107,6 +108,7 @@ const live = {
   boostUntil: 0,
   lastRedrawAt: 0,
   finished: new Map<string, Check[]>(),
+  pendingPrompt: null as string | null,
 }
 
 /**
@@ -114,6 +116,27 @@ const live = {
  * fullscreen reports no clicks, so the frame's close mark cannot be the only way.
  */
 const openPane = ($: EngineInterface) => $.ui.open({ id: PANE, title: 'CI', columns: 64, closeOnEscape: true })
+
+/**
+ * Queues the failed checks as a prompt for Claude, a turn of its own, and
+ * answers with what was done as a line for the person.
+ *
+ * The next tick submits it: a command's hook holds the turn a prompt would
+ * wait on, so it cannot submit one itself.
+ */
+const diagnose = ($: EngineInterface): string => {
+  const prompt = diagnosePrompt(live.latest)
+
+  if (prompt === undefined) {
+    return 'No failed checks to diagnose.'
+  }
+
+  live.pendingPrompt = prompt
+
+  const failed = tally(live.latest.checks).failed
+
+  return `Asked Claude to diagnose ${failed} failed ${failed === 1 ? 'check' : 'checks'}.`
+}
 
 const run = async ($: EngineInterface, argv: readonly string[]) => {
   try {
@@ -219,7 +242,7 @@ const announce = ($: EngineInterface, before: Snapshot, after: Snapshot) => {
   const counts = tally(after.checks)
 
   if (isActive(before.checks) && !isActive(after.checks) && after.checks.length > 0) {
-    const verdict = counts.failed > 0 ? `${counts.failed} of ${counts.total} checks failed` : `all ${counts.total} checks passed`
+    const verdict = counts.failed > 0 ? `${counts.failed} of ${counts.total} checks failed, /ci diagnose to investigate` : `all ${counts.total} checks passed`
 
     $.ui.toast(`CI finished: ${verdict}`, { timeoutMs: 8000 })
 
@@ -272,10 +295,17 @@ const poll = ($: EngineInterface): Promise<void> => {
 
 /**
  * Runs every second: moves the clock the footer entry, band and pane draw
- * from, and starts a poll when one is due.
+ * from, submits a queued prompt, and starts a poll when one is due.
  */
 const tick = async ($: EngineInterface) => {
   const now = await $.clock.now()
+
+  if (live.pendingPrompt !== null) {
+    const text = live.pendingPrompt
+
+    live.pendingPrompt = null
+    void $.prompt.submit({ text }).catch(error => $.ui.log(`diagnose failed: ${String(error)}`, { to: 'debug' }))
+  }
 
   if (now >= live.nextPollAt) {
     live.nextPollAt = now + ACTIVE_POLL_MS
@@ -295,7 +325,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'ci',
       description: 'Show GitHub Actions checks for the current branch',
-      argumentHint: '[open|refresh|close]',
+      argumentHint: '[open|refresh|diagnose|close]',
       immediate: true,
     })
 
@@ -316,11 +346,15 @@ export const register: Register = on => {
       return { text: 'CI pane closed.' }
     }
 
-    if (action !== '' && action !== 'open' && action !== 'refresh') {
-      return { text: 'Usage: /ci [open|refresh|close]' }
+    if (action !== '' && action !== 'open' && action !== 'refresh' && action !== 'diagnose') {
+      return { text: 'Usage: /ci [open|refresh|diagnose|close]' }
     }
 
     await poll($)
+
+    if (action === 'diagnose') {
+      return { text: diagnose($) }
+    }
 
     const now = await $.clock.now()
 
@@ -408,6 +442,9 @@ export const register: Register = on => {
           {pullRequestLine(ui, current)}
           <Text>CI {tallyText(current.checks)}</Text>
           <Button key="details" label="Details" onPress={() => void openPane($)} />
+          {tally(current.checks).failed > 0 && (
+            <Button key="diagnose" label="Diagnose" onPress={() => void $.ui.toast(diagnose($))} />
+          )}
           <Button key="hide" label="Hide" onPress={() => void update($, isBandHidden, () => true)} />
         </Box>
         {rows.slice(0, room).map(check => checkRow(ui, check, now))}
@@ -422,12 +459,16 @@ export const register: Register = on => {
     const current = await read($, snapshot)
     const now = Math.max(await read($, clock), current.fetchedAt)
     const refreshButton = <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void poll($)} />
+    const diagnoseButton = tally(current.checks).failed > 0 && (
+      <Button key="diagnose" label="Diagnose" hotkey="d" variant="primary" onPress={() => void $.ui.toast(diagnose($))} />
+    )
     const closeButton = <Button key="close" label="Close" hotkey="c" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />
     const isUnclickable = e.surface === 'terminal' && e.props.placement === 'inline'
     const openCommand = current.pullRequest === null ? '' : ', /ci open'
+    const diagnoseCommand = tally(current.checks).failed > 0 ? ', /ci diagnose' : ''
     const paddingX = e.props.placement === 'dock' ? DOCK_PADDING : 0
     const layoutHint = isUnclickable && (
-      <Text dimColor>Esc closes. Also /ci refresh{openCommand}. Buttons are clickable in /tui fullscreen.</Text>
+      <Text dimColor>Esc closes. Also /ci refresh{openCommand}{diagnoseCommand}. Buttons are clickable in /tui fullscreen.</Text>
     )
 
     if (current.phase !== 'ready') {
@@ -474,6 +515,7 @@ export const register: Register = on => {
               onPress={() => void $.process.run(['gh', 'pr', 'view', String(current.pullRequest?.number), '--web'])}
             />
           )}
+          {diagnoseButton}
           {closeButton}
         </Box>
         {layoutHint}
