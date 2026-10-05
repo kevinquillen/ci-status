@@ -157,6 +157,20 @@ export const pullRequestState = (snapshot: Snapshot): string => {
 }
 
 /**
+ * The run ids of the GitHub Actions runs that have a failed job, for
+ * `gh run rerun`. Checks from other services have no run and are left out.
+ */
+export const failedRuns = (checks: readonly Check[]): string[] => {
+  const ids = checks.flatMap(check => {
+    const id = check.state === 'failed' ? /\/actions\/runs\/(\d+)/.exec(check.url ?? '')?.[1] : undefined
+
+    return id === undefined ? [] : [id]
+  })
+
+  return [...new Set(ids)]
+}
+
+/**
  * The footer entry for a snapshot as text, or undefined when there is nothing
  * worth pinning: no supported repository, or no pull request and no checks
  * that are running or finished within the last half hour.
