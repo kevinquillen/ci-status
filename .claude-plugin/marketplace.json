@@ -8,7 +8,7 @@
     {
       "name": "ci-status",
       "source": "./ci-status",
-      "description": "Live GitHub Actions status for the current branch: a status line entry, a band while checks run, and a /ci pane."
+      "description": "Live GitHub Actions status for the current branch: a status line entry, toasts as runs finish, and a /ci pane."
     }
   ]
 }
