@@ -282,7 +282,9 @@ const announce = ($: EngineInterface, before: Snapshot, after: Snapshot) => {
   if (isActive(before.checks) && !isActive(after.checks) && after.checks.length > 0) {
     const isDiagnosing = counts.failed > 0 && live.isClaudesRun && live.isDiagnosingFailures
     const followUp = isDiagnosing ? 'asking Claude to diagnose' : '/ci diagnose to investigate'
-    const verdict = counts.failed > 0 ? `${counts.failed} of ${counts.total} checks failed, ${followUp}` : `all ${counts.total} checks passed`
+    const failures = `${counts.failed} failed ${counts.failed === 1 ? 'check' : 'checks'}, ${followUp}`
+    const successes = counts.total === 1 ? 'all checks passed' : `all ${counts.total} checks passed`
+    const verdict = counts.failed > 0 ? failures : successes
 
     live.isClaudesRun = false
     live.pendingPrompt = isDiagnosing ? (diagnosePrompt(after) ?? null) : live.pendingPrompt
