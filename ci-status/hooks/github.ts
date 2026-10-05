@@ -17,6 +17,23 @@ const time = (value: unknown): number | null => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
+const PROVIDERS: readonly (readonly [RegExp, string])[] = [
+  [/github/i, 'GitHub'],
+  [/gitlab/i, 'GitLab'],
+  [/bitbucket/i, 'Bitbucket'],
+  [/dev\.azure\.com|visualstudio\.com/i, 'Azure DevOps'],
+]
+
+/**
+ * Names the hosting service a git remote URL points at (https or ssh form),
+ * or null when the host is not one it recognises.
+ */
+export const detectProvider = (remoteUrl: string): string | null => {
+  const host = /^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^:/]+)/i.exec(remoteUrl.trim())?.[1] ?? ''
+
+  return PROVIDERS.find(([pattern]) => pattern.test(host))?.[1] ?? null
+}
+
 /** Parses JSON output, or null when it is not JSON. */
 export const parse = (stdout: string): unknown => {
   try {
