@@ -18,7 +18,8 @@ import { detectProvider, firstLine, parse, parseJobs, parsePullRequest, parseRol
 import type { Json } from './github'
 
 const PANE = 'ci-status'
-const ACTIVE_POLL_MS = 10_000
+const ACTIVE_POLL_MS = 3_000
+const ACTIVE_RUNS_POLL_MS = 10_000
 const IDLE_POLL_MS = 60_000
 const BOOST_MS = 120_000
 const BOOST_DELAY_MS = 3_000
@@ -246,8 +247,9 @@ const refresh = async ($: EngineInterface) => {
 
   const now = await $.clock.now()
   const isBusy = isActive(fresh.checks) || now < live.boostUntil
+  const activePace = fresh.pullRequest === null ? ACTIVE_RUNS_POLL_MS : ACTIVE_POLL_MS
 
-  live.nextPollAt = now + (isBusy ? ACTIVE_POLL_MS : IDLE_POLL_MS)
+  live.nextPollAt = now + (isBusy ? activePace : IDLE_POLL_MS)
 }
 
 /** Refetches from GitHub; callers during a fetch share the one in flight. */
