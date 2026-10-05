@@ -37,6 +37,8 @@ const FINISHED = RUNNING.map(node =>
  * `github.branch` checks another branch out, or with null leaves the
  * directory outside any repository; `github.head` is the commit checked out,
  * and `github.rerunError` makes `gh run rerun` fail with that message.
+ * `github.runs` is what `gh run list` reports for the commit, and
+ * `github.jobs` the jobs `gh run view` reports for each run id.
  * Returns the toasts the mod raised, the panes it opened and closed, the
  * prompts it submitted and the commands it ran. `github.standing` adds fields
  * to the pull request, such as its merge state. The footer keeps the engine's own
@@ -52,6 +54,8 @@ const fakeSession = (
     branch?: string | null
     head?: string
     rerunError?: string
+    runs?: unknown[]
+    jobs?: Record<string, unknown[]>
   },
 ) => {
   const seen = {
@@ -107,6 +111,21 @@ const fakeSession = (
 
     if (command.startsWith('git rev-parse') && github.branch === null) {
       return { value: { ...ok(''), exitCode: 128, stderr: 'fatal: not a git repository' } }
+    }
+
+    if (command === 'git rev-parse HEAD') {
+      return { value: ok(`${github.head ?? 'abc'}\n`) }
+    }
+
+    if (command.startsWith('gh run list') && github.runs !== undefined) {
+      return { value: ok(JSON.stringify(github.runs)) }
+    }
+
+    const viewed = /^gh run view (\d+) --json jobs$/.exec(command)?.[1]
+    const jobs = viewed === undefined ? undefined : github.jobs?.[viewed]
+
+    if (jobs !== undefined) {
+      return { value: ok(JSON.stringify({ jobs })) }
     }
 
     if (command === 'git rev-parse HEAD --abbrev-ref HEAD') {
@@ -643,6 +662,107 @@ describe('drawing', () => {
     expect(await hidden.find({ key: 'hide' })).toBe(undefined)
     expect((await hidden.find({ type: 'Text' }))?.text).toBe('engine')
     await hidden.unmount()
+  })
+
+  test('reads the jobs of the commit\'s workflow runs when there is no pull request', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const workflowRun = (databaseId: number, workflowName: string, event: string, status: string) => ({
+      databaseId,
+      workflowName,
+      event,
+      status,
+      conclusion: status === 'completed' ? 'success' : '',
+      startedAt: '2026-10-05T11:57:00Z',
+      updatedAt: status === 'completed' ? '2026-10-05T11:59:00Z' : '2026-10-05T11:58:00Z',
+      url: `https://github.com/acme/app/actions/runs/${databaseId}`,
+    })
+    const job = (name: string, status: string) => ({
+      name,
+      status,
+      conclusion: status === 'completed' ? 'success' : '',
+      startedAt: '2026-10-05T11:57:00Z',
+      completedAt: status === 'completed' ? '2026-10-05T11:59:00Z' : '0001-01-01T00:00:00Z',
+      url: `https://github.com/acme/app/actions/runs/7/job/${name}`,
+    })
+    const github = {
+      rollup: null as unknown[] | null,
+      runs: [workflowRun(7, 'CI', 'push', 'in_progress'), workflowRun(8, 'Deploy', 'push', 'in_progress'), workflowRun(9, 'Nightly', 'schedule', 'in_progress')],
+      jobs: { '7': [job('build', 'completed'), job('test', 'in_progress')] } as Record<string, unknown[]>,
+    }
+    const { commands, toasts } = fakeSession(on, github)
+    const views = () => commands.filter(command => command === 'gh run view 7 --json jobs').length
+
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    const shown = await footer($)
+
+    expect(shown.text).toMatch(/^focus & Branch: feature {2}CI: GitHub {2}1\/3 passed, 2 running /)
+    expect(shown.link).toBe(undefined)
+    expect(commands).toContain('gh run list --commit abc --limit 40 --json databaseId,workflowName,event,status,conclusion,startedAt,updatedAt,url')
+    expect(commands).not.toContain('gh run view 9 --json jobs')
+
+    const summary = await $.command.run({
+      command: 'ci',
+      args: 'refresh',
+      origin: { kind: 'composer' },
+      presentation: { isFullscreen: false, columns: 120 },
+    })
+
+    expect(summary.text).toContain('feature: no PR')
+    expect(summary.text).toContain('running Deploy')
+
+    github.runs = [workflowRun(7, 'CI', 'push', 'completed'), workflowRun(9, 'Nightly', 'schedule', 'in_progress')]
+    github.jobs = { '7': [job('build', 'completed'), job('test', 'completed')] }
+    await clock.advance(15_000)
+    expect(toasts.at(-1)).toBe('CI finished: all 2 checks passed')
+
+    const seen = views()
+
+    await clock.advance(130_000)
+    expect(views()).toBe(seen)
+  })
+
+  test('counts checks reported by other services and links to them', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const status = (context: string, state: string) => ({
+      __typename: 'StatusContext',
+      context,
+      state,
+      startedAt: '2026-10-05T11:57:00Z',
+      targetUrl: `https://ci.example.com/acme/app/${state.toLowerCase()}`,
+    })
+    const github = {
+      rollup: [
+        checkRun('lint', 'COMPLETED', 'SUCCESS', '2026-10-05T11:57:00Z'),
+        status('ci/external: build', 'FAILURE'),
+        status('deploy/preview', 'PENDING'),
+      ] as unknown[] | null,
+    }
+    const { prompts } = fakeSession(on, github)
+    const command = { command: 'ci', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as const
+
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+    expect((await footer($)).text).toContain('1/3 passed, 1 failed, 1 running')
+
+    const ui = await $.ui.mount({
+      plugin: 'ci-status',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'ci-status',
+      props: { title: 'CI', isFocused: false, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    })
+
+    expect((await ui.find({ type: 'Link', text: 'ci/external: build' }))?.props.href).toBe('https://ci.example.com/acme/app/failure')
+    expect(await ui.find({ key: 'diagnose' })).toBeDefined()
+    expect(await ui.find({ key: 'rerun' })).toBe(undefined)
+    await ui.unmount()
+
+    expect((await $.command.run({ ...command, args: 'rerun' })).text).toBe('No failed GitHub Actions jobs to re-run.')
+    await $.command.run({ ...command, args: 'diagnose' })
+    await clock.advance(1000)
+    expect(prompts[0]).toContain('- "ci/external: build": https://ci.example.com/acme/app/failure')
   })
 
   test('names the log command for a job of GitHub Actions', async () => {
