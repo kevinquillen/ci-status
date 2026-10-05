@@ -28,7 +28,6 @@ const BOOST_MS = 120_000
 const BOOST_DELAY_MS = 3_000
 const REPOSITORY_CHECK_MS = 5_000
 const IDLE_REDRAW_MS = 30_000
-const BAND_ROWS = 5
 const DOCK_PADDING = 2
 const MAX_RUNS = 10
 const LISTED_RUNS = 40
@@ -55,7 +54,6 @@ const COLORS: Record<CheckState, string | undefined> = {
 
 const snapshot = atom({ plugin: 'ci-status', key: 'snapshot' } as const, EMPTY)
 const clock = atom({ plugin: 'ci-status', key: 'now' } as const, 0)
-const isBandHidden = atom({ plugin: 'ci-status', key: 'isBandHidden' } as const, false)
 
 /**
  * A URL the Link element accepts (https, printable ASCII, no user part), or
@@ -317,10 +315,6 @@ const refresh = async ($: EngineInterface) => {
   announce($, before, fresh)
   await update($, snapshot, () => fresh)
 
-  if (!isActive(before.checks) && isActive(fresh.checks)) {
-    await update($, isBandHidden, () => false)
-  }
-
   const now = await $.clock.now()
   const isBusy = isActive(fresh.checks) || now < live.boostUntil
   const activePace = fresh.pullRequest === null ? ACTIVE_RUNS_POLL_MS : ACTIVE_POLL_MS
@@ -372,7 +366,7 @@ const watchRepository = async ($: EngineInterface, now: number) => {
 }
 
 /**
- * Runs every second: moves the clock the footer entry, band and pane draw
+ * Runs every second: moves the clock the footer entry and pane draw
  * from, submits a queued prompt, watches the repository, and starts a poll
  * when one is due.
  */
@@ -520,38 +514,6 @@ export const register: Register = (on, options) => {
           {entry}
         </Text>
       </Text>
-    )
-  })
-
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const current = await read($, snapshot)
-    const isQuiet = e.props.hasSurvey || !isActive(current.checks) || (await read($, isBandHidden))
-
-    if (isQuiet) {
-      return next(e)
-    }
-
-    const ui = $.ui.resolve(e)
-    const { Box, Button, Text } = ui
-    const now = Math.max(await read($, clock), current.fetchedAt)
-    const room = Math.max(1, Math.min(BAND_ROWS, e.props.maxRows - 2))
-    const rows = sortChecks(current.checks).filter(check => check.state === 'failed' || check.state === 'running')
-    const hidden = rows.length - room
-
-    return (
-      <Box flexDirection="column">
-        <Box gap={2}>
-          {pullRequestLine(ui, current)}
-          <Text>CI {tallyText(current.checks)}</Text>
-          <Button key="details" label="Details" onPress={() => void openPane($)} />
-          {tally(current.checks).failed > 0 && (
-            <Button key="diagnose" label="Diagnose" onPress={() => void $.ui.toast(diagnose($))} />
-          )}
-          <Button key="hide" label="Hide" onPress={() => void update($, isBandHidden, () => true)} />
-        </Box>
-        {rows.slice(0, room).map(check => checkRow(ui, check, now))}
-        {hidden > 0 && <Text dimColor>{hidden} more in /ci</Text>}
-      </Box>
     )
   })
 

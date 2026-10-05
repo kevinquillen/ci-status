@@ -34,6 +34,6 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'ci-status': { snapshot: Snapshot; now: number; isBandHidden: boolean }
+    'ci-status': { snapshot: Snapshot; now: number }
   }
 }
