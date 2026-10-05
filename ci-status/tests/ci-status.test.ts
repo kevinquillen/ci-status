@@ -35,7 +35,8 @@ const FINISHED = RUNNING.map(node =>
  * whose open pull request #42 reports whatever rollup `github.rollup` holds,
  * and whose upstream points at `github.upstream` when that is set.
  * `github.branch` checks another branch out, or with null leaves the
- * directory outside any repository.
+ * directory outside any repository; `github.head` is the commit checked out,
+ * and `github.rerunError` makes `gh run rerun` fail with that message.
  * Returns the toasts the mod raised, the panes it opened and closed, the
  * prompts it submitted and the commands it ran. `github.standing` adds fields
  * to the pull request, such as its merge state. The footer keeps the engine's own
@@ -43,7 +44,15 @@ const FINISHED = RUNNING.map(node =>
  */
 const fakeSession = (
   on: On,
-  github: { rollup: unknown[] | null; remote?: string; upstream?: string; standing?: object; branch?: string | null },
+  github: {
+    rollup: unknown[] | null
+    remote?: string
+    upstream?: string
+    standing?: object
+    branch?: string | null
+    head?: string
+    rerunError?: string
+  },
 ) => {
   const seen = {
     toasts: [] as string[],
@@ -89,7 +98,7 @@ const fakeSession = (
     seen.commands.push(command)
 
     if (command.startsWith('gh run rerun')) {
-      return { value: ok('') }
+      return { value: github.rerunError === undefined ? ok('') : { ...ok(''), exitCode: 1, stderr: github.rerunError } }
     }
 
     if (command.startsWith('git rev-parse --verify') && github.upstream !== undefined) {
@@ -101,7 +110,7 @@ const fakeSession = (
     }
 
     if (command === 'git rev-parse HEAD --abbrev-ref HEAD') {
-      return { value: ok(`abc\n${github.branch ?? 'feature'}\n`) }
+      return { value: ok(`${github.head ?? 'abc'}\n${github.branch ?? 'feature'}\n`) }
     }
 
     if (command.startsWith('git rev-parse --abbrev-ref')) {
@@ -133,8 +142,8 @@ const fakeSession = (
 }
 
 /** What the prompt footer shows: its text, and the link inside it if any. */
-const footer = async ($: Engine) => {
-  const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
+const footer = async ($: Engine, modes: readonly string[] = ['focus']) => {
+  const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes } })
   const shown = { text: (await ui.find({ type: 'Text' }))?.text, link: await ui.find({ type: 'Link' }) }
 
   await ui.unmount()
@@ -298,6 +307,35 @@ describe('footer entry', () => {
     github.branch = null
     await clock.advance(7000)
     expect((await footer($)).text).toBe('engine')
+  })
+
+  test('fetches again at once after a commit made outside the session', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: [] as unknown[] | null, head: 'abc' }
+
+    fakeSession(on, github)
+    await $.session.start(SESSION)
+    await clock.advance(10_000)
+    expect((await footer($)).text).not.toContain('running')
+
+    github.head = 'def'
+    github.rollup = RUNNING
+    await clock.advance(7000)
+    expect((await footer($)).text).toContain('1 running')
+  })
+
+  test('stands alone with no mode labels and drops the branch on a detached HEAD', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: FINISHED as unknown[] | null, branch: 'feature' as string | null }
+
+    fakeSession(on, github)
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+    expect((await footer($, [])).text).toMatch(/^Branch: feature {2}CI: GitHub /)
+
+    github.branch = 'HEAD'
+    await clock.advance(7000)
+    expect((await footer($, [])).text).toMatch(/^CI: GitHub /)
   })
 
   test('shows only the branch when gh cannot list runs for the commit', async ($, on) => {
@@ -528,6 +566,83 @@ describe('drawing', () => {
     expect(toasts.at(-1)).toBe('CI finished: 1 failed check, asking Claude to diagnose')
     expect(prompts).toHaveLength(1)
     expect(prompts[0]).toContain('- "unit" in workflow "CI"')
+  })
+
+  test('the Re-run failed button re-runs and reports a refusal', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: FINISHED as unknown[] | null, rerunError: undefined as string | undefined }
+    const { commands, toasts } = fakeSession(on, github)
+
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    const ui = await $.ui.mount({
+      plugin: 'ci-status',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'ci-status',
+      props: { title: 'CI', isFocused: false, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    })
+
+    await ui.press({ key: 'rerun' })
+    expect(commands).toContain('gh run rerun 1 --failed')
+    expect(toasts.at(-1)).toBe('Re-running the failed jobs of 1 run.')
+
+    github.rerunError = 'run 1 cannot be rerun; its workflow file may be broken\nmore detail'
+    await ui.press({ key: 'rerun' })
+    expect(toasts.at(-1)).toBe('Re-run refused: run 1 cannot be rerun; its workflow file may be broken')
+    await ui.unmount()
+  })
+
+  test('/ci open, close and an unknown argument answer for themselves', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: FINISHED as unknown[] | null }
+    const { commands, closed } = fakeSession(on, github)
+    const command = { command: 'ci', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as const
+    const answer = async (args: string) => (await $.command.run({ ...command, args })).text
+
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    expect(await answer('open')).toBe('Opened PR #42: https://github.com/acme/app/pull/42')
+    expect(commands).toContain('gh pr view 42 --web')
+    expect(await answer('close')).toBe('CI pane closed.')
+    expect(closed).toEqual(['ci-status'])
+    expect(await answer('merge')).toBe('Usage: /ci [open|refresh|diagnose|rerun|close]')
+
+    github.rollup = null
+    expect(await answer('open')).toBe('No open pull request for feature.')
+  })
+
+  test('the band offers Diagnose on a failure and Hide puts it away', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const { prompts } = fakeSession(on, { rollup: RUNNING })
+    const band = () =>
+      $.ui.mount({
+        plugin: 'ci-status',
+        surface: 'terminal',
+        component: 'AbovePrompt',
+        props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+      })
+
+    on('ui.render', { component: 'AbovePrompt' }, ($: EngineInterface, e) => h($.ui.resolve(e).Text, null, 'engine') as RenderElement)
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    const shown = await band()
+
+    await shown.press({ key: 'diagnose' })
+    await clock.advance(1000)
+    expect(prompts).toHaveLength(1)
+
+    await shown.press({ key: 'hide' })
+    await shown.unmount()
+
+    const hidden = await band()
+
+    expect(await hidden.find({ key: 'hide' })).toBe(undefined)
+    expect((await hidden.find({ type: 'Text' }))?.text).toBe('engine')
+    await hidden.unmount()
   })
 
   test('names the log command for a job of GitHub Actions', async () => {
