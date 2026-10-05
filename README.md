@@ -36,7 +36,7 @@ mod stays hidden and `/ci` reports that the host is not supported.
 
 ```
 claude plugin marketplace add kevinquillen/ci-status
-claude plugin install ci-status@github-mod
+claude plugin install ci-status@ci-status
 ```
 
 To try it from a clone without installing:
