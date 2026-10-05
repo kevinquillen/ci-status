@@ -33,11 +33,11 @@ const FINISHED = RUNNING.map(node =>
 /**
  * Stands in for the engine, `git` and `gh`: a repository on branch `feature`
  * whose open pull request #42 reports whatever rollup `github.rollup` holds.
- * Returns the toasts the mod raised. The footer keeps the engine's own
+ * Returns the toasts the mod raised and the panes it opened and closed. The footer keeps the engine's own
  * drawing, the text `engine`, wherever the mod passes.
  */
 const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string }) => {
-  const seen = { toasts: [] as string[] }
+  const seen = { toasts: [] as string[], opened: [] as unknown[], closed: [] as string[] }
   const ok = (stdout: string) => ({
     exitCode: 0,
     stdout,
@@ -48,7 +48,16 @@ const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string
 
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  on('ui.open', ($, e) => {
+    seen.opened.push(e)
+
+    return { value: { isPlaced: true as const } }
+  })
+  on('ui.close', ($, e) => {
+    seen.closed.push(e.id)
+
+    return { value: undefined }
+  })
   on('ui.render', { component: 'SessionMode' }, ($: EngineInterface, e) => h($.ui.resolve(e).Text, null, 'engine') as RenderElement)
   on('ui.toast', ($, e) => {
     seen.toasts.push(e.text)
@@ -286,7 +295,8 @@ describe('drawing', () => {
   test('/ci answers with a text summary and lists every check in the pane', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
 
-    fakeSession(on, { rollup: RUNNING })
+    const { opened, closed } = fakeSession(on, { rollup: RUNNING })
+
     await $.session.start(SESSION)
     await clock.advance(2000)
 
@@ -317,6 +327,10 @@ describe('drawing', () => {
 
     expect(await ui.findAll({ type: 'Link' })).toHaveLength(4)
     expect(await ui.find({ key: 'open' })).toBeDefined()
+    expect(opened).toEqual([{ id: 'ci-status', title: 'CI', columns: 64, closeOnEscape: true }])
+
+    await ui.press({ key: 'close' })
+    expect(closed).toEqual(['ci-status'])
     await ui.unmount()
   })
 })
