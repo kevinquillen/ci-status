@@ -11,7 +11,9 @@ The mod is named `ci-status`. The command it adds is `/ci`.
   linked pull request, a tally such as `2/3 passed, 1 running`, and a timer.
   It is red when any check has failed, yellow while checks are running or
   queued, and green once they have passed. It hides itself when there is
-  nothing to report.
+  nothing to report. With a pull request it ends with where the pull request
+  stands, such as `approved, ready to merge` or `changes requested, merge
+  blocked`.
 - **Band above the prompt.** While a run is active, the running and failed
   checks are listed above the prompt. `Hide` dismisses it until the next run.
 - **Pane.** `/ci` opens a pane listing every check with its state and duration,
@@ -53,10 +55,23 @@ claude --plugin-dir ./github-mod/ci-status
 | `/ci refresh` | Fetches the latest status and prints the summary |
 | `/ci open` | Opens the pull request in the browser |
 | `/ci diagnose` | Asks Claude to read the logs of the failed checks and report the cause |
+| `/ci rerun` | Re-runs the failed jobs of the GitHub Actions runs that have one |
 | `/ci close` | Closes the pane |
 
 The pane's buttons and its close mark are clickable in the fullscreen layout
 (`/tui fullscreen`). In the default layout, use the commands above.
+
+The pane also has `Diagnose` and `Re-run failed` buttons while checks have
+failed.
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `diagnoseOnFailure` | off | When a run fails after Claude pushed, asks Claude to diagnose it without being asked. Uses tokens. |
+
+Change it in the config menu (`/config`), or with
+`claude plugin configure ci-status`.
 
 ## How often it refreshes
 
@@ -69,10 +84,13 @@ The pane's buttons and its close mark are clickable in the fullscreen layout
 After Claude runs `git push`, `gh pr create`, `gh pr ready`, `gh pr merge`,
 `gh run rerun` or `gh workflow run`, the mod refetches within a few seconds and
 keeps the active pace for two minutes so the new run is picked up as it starts.
+A push from your own terminal is noticed the same way within about five
+seconds, by watching the local upstream ref.
 
 Refreshing calls the GitHub API through `gh` and counts against your API rate
 limit. It never calls the model, so it uses no tokens. Diagnose is the one
-exception: it starts a normal Claude turn, and only when you ask for it.
+exception: it starts a normal Claude turn, and only when you ask for it or
+have turned on `diagnoseOnFailure`.
 
 ## Development
 
