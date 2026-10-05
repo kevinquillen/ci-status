@@ -35,15 +35,15 @@ mod stays hidden and `/ci` reports that the host is not supported.
 ## Install
 
 ```
-claude plugin marketplace add kevinquillen/github-mod
+claude plugin marketplace add kevinquillen/ci-status
 claude plugin install ci-status@github-mod
 ```
 
 To try it from a clone without installing:
 
 ```
-git clone git@github.com:kevinquillen/github-mod.git
-claude --plugin-dir ./github-mod/ci-status
+git clone git@github.com:kevinquillen/ci-status.git
+claude --plugin-dir ./ci-status/ci-status
 ```
 
 ## Commands
