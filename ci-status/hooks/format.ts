@@ -25,6 +25,25 @@ export const tally = (checks: readonly Check[]): Tally => {
 export const isActive = (checks: readonly Check[]): boolean =>
   checks.some(check => check.state === 'running' || check.state === 'queued')
 
+/**
+ * The one state the checks add up to, for coloring: failed as soon as any
+ * check fails, running while any is still queued or running, passed once
+ * every check that ran has passed. Null when no check ran.
+ */
+export const verdict = (checks: readonly Check[]): 'failed' | 'running' | 'passed' | null => {
+  const counts = tally(checks)
+
+  if (counts.failed > 0) {
+    return 'failed'
+  }
+
+  if (isActive(checks)) {
+    return 'running'
+  }
+
+  return counts.passed > 0 ? 'passed' : null
+}
+
 /** Formats a duration as mm:ss, or h:mm:ss from one hour up. */
 export const formatElapsed = (ms: number): string => {
   const seconds = Math.max(0, Math.floor(ms / 1000))
