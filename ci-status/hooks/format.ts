@@ -228,7 +228,9 @@ export const diagnosePrompt = (snapshot: Snapshot): string | undefined => {
     const job = /\/actions\/runs\/\d+\/job\/(\d+)/.exec(check.url ?? '')?.[1]
     const log = job === undefined ? (check.url ?? 'no link') : `gh run view --job ${job} --log-failed`
 
-    return `- "${check.name}" in workflow "${check.workflow}": ${log}`
+    const source = check.workflow === '' ? '' : ` in workflow "${check.workflow}"`
+
+    return `- "${check.name}"${source}: ${log}`
   })
 
   return [
