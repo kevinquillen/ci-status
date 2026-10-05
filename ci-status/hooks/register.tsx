@@ -471,16 +471,27 @@ export const register: Register = (on, options) => {
     const current = await read($, snapshot)
     const now = Math.max(await read($, clock), current.fetchedAt)
     const line = statusText(current, now)
+    const branch = current.branch === null ? '' : `Branch: ${current.branch}`
 
-    if (line === undefined) {
+    if (line === undefined && branch === '') {
       return next(e)
     }
 
     const { Link, Text } = $.ui.resolve(e)
+    const modes = e.props.modes.map(mode => `${mode} & `).join('')
+    const lead = `${modes}${branch}${line === undefined || branch === '' ? '' : '  '}`
+
+    if (line === undefined) {
+      return (
+        <Text dimColor wrap="truncate-end">
+          {lead}
+        </Text>
+      )
+    }
+
     const href = safeHref(current.pullRequest?.url ?? null)
     const label = pullRequestLabel(current)
     const cut = href === null ? -1 : line.indexOf(label)
-    const modes = e.props.modes.map(mode => `${mode} & `).join('')
     const state = verdict(current.checks)
     const color = state === null ? undefined : COLORS[state]
     const entry =
@@ -490,7 +501,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Text wrap="truncate-end">
-        {modes !== '' && <Text dimColor>{modes}</Text>}
+        {lead !== '' && <Text dimColor>{lead}</Text>}
         <Text color={color} dimColor={color === undefined}>
           {entry}
         </Text>
