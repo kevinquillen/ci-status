@@ -15,13 +15,11 @@ The mod is named `ci-status`. The command it adds is `/ci`.
   request stands, such as `approved, ready to merge` or `changes requested,
   merge blocked`. It hides itself when there is nothing to report, leaving
   the branch.
-- **Band above the prompt.** While a run is active, the running and failed
-  checks are listed above the prompt. `Hide` dismisses it until the next run.
 - **Pane.** `/ci` opens a pane listing every check with its state and duration,
   each linked to its job page.
 - **Toasts.** One when a check newly fails, and one when the run finishes.
-- **Diagnose.** When checks have failed, a `Diagnose` button in the band and
-  the pane (or `/ci diagnose`) asks Claude to read the failing job logs and
+- **Diagnose.** When checks have failed, a `Diagnose` button in the pane (or
+  `/ci diagnose`) asks Claude to read the failing job logs and
   report the cause and a proposed fix. Claude changes nothing until you agree.
 
 ## Requirements
