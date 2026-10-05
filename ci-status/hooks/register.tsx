@@ -108,6 +108,12 @@ const live = {
   finished: new Map<string, Check[]>(),
 }
 
+/**
+ * Opens the pane so Escape at an idle prompt closes it: a terminal outside
+ * fullscreen reports no clicks, so the frame's close mark cannot be the only way.
+ */
+const openPane = ($: EngineInterface) => $.ui.open({ id: PANE, title: 'CI', columns: 64, closeOnEscape: true })
+
 const run = async ($: EngineInterface, argv: readonly string[]) => {
   try {
     return await $.process.run(argv, { timeoutMs: 20000, env: { GH_PROMPT_DISABLED: '1' } })
@@ -330,7 +336,7 @@ export const register: Register = on => {
     }
 
     if (action === '') {
-      await $.ui.open({ id: PANE, title: 'CI', columns: 64 })
+      await openPane($)
     }
 
     return { text: summaryText(live.latest, now) }
@@ -400,7 +406,7 @@ export const register: Register = on => {
         <Box gap={2}>
           {pullRequestLine(ui, current)}
           <Text>CI {tallyText(current.checks)}</Text>
-          <Button key="details" label="Details" onPress={() => void $.ui.open({ id: PANE, title: 'CI', columns: 64 })} />
+          <Button key="details" label="Details" onPress={() => void openPane($)} />
           <Button key="hide" label="Hide" onPress={() => void update($, isBandHidden, () => true)} />
         </Box>
         {rows.slice(0, room).map(check => checkRow(ui, check, now))}
@@ -415,6 +421,7 @@ export const register: Register = on => {
     const current = await read($, snapshot)
     const now = Math.max(await read($, clock), current.fetchedAt)
     const refreshButton = <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void poll($)} />
+    const closeButton = <Button key="close" label="Close" hotkey="c" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />
 
     if (current.phase !== 'ready') {
       const note = current.phase === 'loading' ? 'Loading CI status...' : `CI status unavailable: ${current.problem}`
@@ -422,7 +429,10 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" gap={1}>
           <Text dimColor>{note}</Text>
-          {refreshButton}
+          <Box gap={2}>
+            {refreshButton}
+            {closeButton}
+          </Box>
         </Box>
       )
     }
@@ -456,6 +466,7 @@ export const register: Register = on => {
               onPress={() => void $.process.run(['gh', 'pr', 'view', String(current.pullRequest?.number), '--web'])}
             />
           )}
+          {closeButton}
         </Box>
       </Box>
     )
