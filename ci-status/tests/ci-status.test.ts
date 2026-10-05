@@ -34,12 +34,17 @@ const FINISHED = RUNNING.map(node =>
  * Stands in for the engine, `git` and `gh`: a repository on branch `feature`
  * whose open pull request #42 reports whatever rollup `github.rollup` holds,
  * and whose upstream points at `github.upstream` when that is set.
+ * `github.branch` checks another branch out, or with null leaves the
+ * directory outside any repository.
  * Returns the toasts the mod raised, the panes it opened and closed, the
  * prompts it submitted and the commands it ran. `github.standing` adds fields
  * to the pull request, such as its merge state. The footer keeps the engine's own
  * drawing, the text `engine`, wherever the mod passes.
  */
-const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string; upstream?: string; standing?: object }) => {
+const fakeSession = (
+  on: On,
+  github: { rollup: unknown[] | null; remote?: string; upstream?: string; standing?: object; branch?: string | null },
+) => {
   const seen = {
     toasts: [] as string[],
     opened: [] as unknown[],
@@ -91,8 +96,16 @@ const fakeSession = (on: On, github: { rollup: unknown[] | null; remote?: string
       return { value: ok(`${github.upstream}\n`) }
     }
 
+    if (command.startsWith('git rev-parse') && github.branch === null) {
+      return { value: { ...ok(''), exitCode: 128, stderr: 'fatal: not a git repository' } }
+    }
+
+    if (command === 'git rev-parse HEAD --abbrev-ref HEAD') {
+      return { value: ok(`abc\n${github.branch ?? 'feature'}\n`) }
+    }
+
     if (command.startsWith('git rev-parse --abbrev-ref')) {
-      return { value: ok('feature\n') }
+      return { value: ok(`${github.branch ?? 'feature'}\n`) }
     }
 
     if (command.startsWith('git remote get-url')) {
@@ -181,7 +194,7 @@ describe('footer entry', () => {
 
     const first = await footer($)
 
-    expect(first.text).toMatch(/^focus & CI: GitHub .*PR #42 \(draft\)  1\/3 passed, 1 failed, 1 running 02:07$/)
+    expect(first.text).toMatch(/^focus & Branch: feature {2}CI: GitHub .*PR #42 \(draft\)  1\/3 passed, 1 failed, 1 running 02:07$/)
     expect(first.link?.text).toContain('PR #42 (draft)')
 
     await clock.advance(1000)
@@ -208,7 +221,7 @@ describe('footer entry', () => {
     const drawn = async () => {
       const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
       const entry = await ui.find({ type: 'Text', text: /^CI: / })
-      const modes = await ui.find({ type: 'Text', text: /^focus & $/ })
+      const modes = await ui.find({ type: 'Text', text: /^focus & Branch: feature {2}$/ })
 
       await ui.unmount()
 
@@ -269,14 +282,32 @@ describe('footer entry', () => {
     expect(toasts.at(-1)).toBe('CI finished: all 2 checks passed')
   })
 
-  test('shows nothing when gh cannot list runs for the commit', async ($, on) => {
+  test('follows a checkout made outside the session and passes outside a repository', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const github = { rollup: null as unknown[] | null, branch: 'feature' as string | null }
+
+    fakeSession(on, github)
+    await $.session.start(SESSION)
+    await clock.advance(10_000)
+    expect((await footer($)).text).toBe('focus & Branch: feature')
+
+    github.branch = 'hotfix'
+    await clock.advance(7000)
+    expect((await footer($)).text).toBe('focus & Branch: hotfix')
+
+    github.branch = null
+    await clock.advance(7000)
+    expect((await footer($)).text).toBe('engine')
+  })
+
+  test('shows only the branch when gh cannot list runs for the commit', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
 
     fakeSession(on, { rollup: null })
     await $.session.start(SESSION)
     await clock.advance(3000)
 
-    expect((await footer($)).text).toBe('engine')
+    expect((await footer($)).text).toBe('focus & Branch: feature')
   })
 })
 
@@ -325,14 +356,14 @@ describe('hiding', () => {
     expect(statusText({ ...quiet, pullRequest, checks: passed }, T0 + 60 * 60_000)).toBe('GitHub PR #7  1/1 passed 1h ago')
   })
 
-  test('shows nothing for a repository hosted elsewhere', async ($, on) => {
+  test('shows only the branch for a repository hosted elsewhere', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
 
     fakeSession(on, { rollup: RUNNING, remote: 'git@gitlab.com:acme/app.git' })
     await $.session.start(SESSION)
     await clock.advance(3000)
 
-    expect((await footer($)).text).toBe('engine')
+    expect((await footer($)).text).toBe('focus & Branch: feature')
   })
 })
 
