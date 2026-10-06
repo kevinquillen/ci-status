@@ -225,7 +225,7 @@ describe('footer entry', () => {
 
     const first = await footer($)
 
-    expect(first.text).toMatch(/^focus & Branch: feature {2}CI: .*PR #42 \(draft\)  1\/3 passed, 1 failed, 1 running 02:07$/)
+    expect(first.text).toMatch(/^focus & Branch: feature {2}.*PR #42 \(draft\)  CI: 1\/3 passed, 1 failed, 1 running 02:07$/)
     expect(first.link?.text).toContain('PR #42 (draft)')
 
     await clock.advance(1000)
@@ -243,7 +243,7 @@ describe('footer entry', () => {
     await clock.advance(15_000)
 
     expect(toasts).toEqual(['CI finished: 1 failed check, /ci diagnose to investigate'])
-    expect((await footer($)).text).toContain('PR #42 (draft)  2/3 passed, 1 failed')
+    expect((await footer($)).text).toContain('PR #42 (draft)  CI: 2/3 passed, 1 failed')
   })
 
   test('lights the entry red, yellow or green and leaves the mode labels dim', async ($, on) => {
@@ -251,7 +251,7 @@ describe('footer entry', () => {
     const github = { rollup: RUNNING as unknown[] | null }
     const drawn = async () => {
       const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
-      const entry = await ui.find({ type: 'Text', text: /^CI: / })
+      const entry = await ui.find({ type: 'Text', text: /PR #42/ })
       const modes = await ui.find({ type: 'Text', text: /^focus & Branch: feature$/ })
 
       await ui.unmount()
@@ -369,11 +369,11 @@ describe('footer entry', () => {
     fakeSession(on, github)
     await $.session.start(SESSION)
     await clock.advance(2000)
-    expect((await footer($, [])).text).toMatch(/^Branch: feature {2}CI: /)
+    expect((await footer($, [])).text).toMatch(/^Branch: feature {2}.*CI: /)
 
     github.branch = 'HEAD'
     await clock.advance(7000)
-    expect((await footer($, [])).text).toMatch(/^CI: /)
+    expect((await footer($, [])).text).toMatch(/^(?!Branch: ).*CI: /)
   })
 
   test('shows only the branch when gh cannot list runs for the commit', async ($, on) => {
@@ -393,7 +393,7 @@ describe('footer entry', () => {
     await $.session.start(SESSION)
     await clock.advance(2000)
 
-    expect((await footer($)).text).toMatch(/^weather: sunny {2}CI: .*2\/3 passed, 1 failed/)
+    expect((await footer($)).text).toMatch(/^weather: sunny {2}.*CI: 2\/3 passed, 1 failed/)
   })
 
   test('draws beside the footer the engine draws itself', async ($, on) => {
@@ -406,7 +406,7 @@ describe('footer entry', () => {
 
     const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
 
-    expect((await ui.find({ type: 'Text', text: /^CI: / }))?.text).toContain('2/3 passed, 1 failed')
+    expect((await ui.find({ type: 'Text', text: /CI: / }))?.text).toContain('2/3 passed, 1 failed')
     await ui.unmount()
   })
 })
@@ -433,7 +433,7 @@ describe('hiding', () => {
 
   test('shows nothing without a pull request or recent checks', async () => {
     expect(statusText(quiet, T0)).toBe(undefined)
-    expect(statusText({ ...quiet, checks: passed }, T0 + 5 * 60_000)).toBe('1/1 passed 6m ago')
+    expect(statusText({ ...quiet, checks: passed }, T0 + 5 * 60_000)).toBe('CI: 1/1 passed 6m ago')
     expect(statusText({ ...quiet, checks: passed }, T0 + 60 * 60_000)).toBe(undefined)
   })
 
@@ -448,12 +448,12 @@ describe('hiding', () => {
     const blocked = { ...quiet, pullRequest: { ...pullRequest, merge: 'blocked', review: 'changes requested' }, checks: passed } as const
 
     expect(statusText(approved, T0)).toBe('PR #7  approved, ready to merge')
-    expect(statusText(blocked, T0 + 60 * 60_000)).toBe('PR #7  1/1 passed 1h ago  changes requested, merge blocked')
+    expect(statusText(blocked, T0 + 60 * 60_000)).toBe('PR #7  CI: 1/1 passed 1h ago  changes requested, merge blocked')
   })
 
   test('keeps a pull request pinned even with no checks', async () => {
     expect(statusText({ ...quiet, pullRequest }, T0)).toBe('PR #7')
-    expect(statusText({ ...quiet, pullRequest, checks: passed }, T0 + 60 * 60_000)).toBe('PR #7  1/1 passed 1h ago')
+    expect(statusText({ ...quiet, pullRequest, checks: passed }, T0 + 60 * 60_000)).toBe('PR #7  CI: 1/1 passed 1h ago')
   })
 
   test('shows only the branch for a repository hosted elsewhere', async ($, on) => {

@@ -192,7 +192,7 @@ export const statusText = (snapshot: Snapshot, now: number): string | undefined 
     const startedAt = runStartedAt(snapshot.checks)
     const elapsed = startedAt === null ? '' : ` ${formatElapsed(now - startedAt)}`
 
-    return joined(label, `${tallyText(snapshot.checks)}${elapsed}`, state)
+    return joined(label, `CI: ${tallyText(snapshot.checks)}${elapsed}`, state)
   }
 
   const finishes = snapshot.checks.flatMap(check =>
@@ -206,7 +206,7 @@ export const statusText = (snapshot: Snapshot, now: number): string | undefined 
     return undefined
   }
 
-  return joined(label, `${tallyText(snapshot.checks)}${ago}`, state)
+  return joined(label, `CI: ${tallyText(snapshot.checks)}${ago}`, state)
 }
 
 /**
