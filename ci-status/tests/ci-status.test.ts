@@ -41,8 +41,9 @@ const FINISHED = RUNNING.map(node =>
  * `github.jobs` the jobs `gh run view` reports for each run id.
  * Returns the toasts the mod raised, the panes it opened and closed, the
  * prompts it submitted and the commands it ran. `github.standing` adds fields
- * to the pull request, such as its merge state. The footer keeps the engine's own
- * drawing, the text `engine`, wherever the mod passes.
+ * to the pull request, such as its merge state. The footer's own drawing is the
+ * engine's: the mode labels it is handed, dim and joined by ` & `, or the
+ * text `github.footer` when another mod is to draw it instead.
  */
 const fakeSession = (
   on: On,
@@ -56,6 +57,7 @@ const fakeSession = (
     rerunError?: string
     runs?: unknown[]
     jobs?: Record<string, unknown[]>
+    footer?: string
   },
 ) => {
   const seen = {
@@ -90,7 +92,7 @@ const fakeSession = (
 
     return { value: undefined }
   })
-  on('ui.render', { component: 'SessionMode' }, ($: EngineInterface, e) => h($.ui.resolve(e).Text, null, 'engine') as RenderElement)
+  on('ui.render', { component: 'SessionMode' }, ($: EngineInterface, e) => h($.ui.resolve(e).Text, { dimColor: true }, github.footer ?? e.props.modes.join(' & ')) as RenderElement)
   on('ui.toast', ($, e) => {
     seen.toasts.push(e.text)
 
@@ -249,7 +251,7 @@ describe('footer entry', () => {
     const drawn = async () => {
       const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
       const entry = await ui.find({ type: 'Text', text: /^CI: / })
-      const modes = await ui.find({ type: 'Text', text: /^focus & Branch: feature {2}$/ })
+      const modes = await ui.find({ type: 'Text', text: /^focus & Branch: feature$/ })
 
       await ui.unmount()
 
@@ -325,7 +327,7 @@ describe('footer entry', () => {
 
     github.branch = null
     await clock.advance(7000)
-    expect((await footer($)).text).toBe('engine')
+    expect((await footer($)).text).toBe('focus')
   })
 
   test('picks up the first push of a branch that had no remote yet', async ($, on) => {
@@ -381,6 +383,16 @@ describe('footer entry', () => {
     await clock.advance(3000)
 
     expect((await footer($)).text).toBe('focus & Branch: feature')
+  })
+
+  test('draws after another mod that draws the footer itself', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+
+    fakeSession(on, { rollup: FINISHED, footer: 'weather: sunny' })
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    expect((await footer($)).text).toMatch(/^weather: sunny {2}CI: GitHub .*2\/3 passed, 1 failed/)
   })
 })
 
