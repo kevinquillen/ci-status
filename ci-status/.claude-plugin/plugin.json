@@ -1,6 +1,6 @@
 {
   "name": "ci-status",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Live GitHub Actions status for the current branch: a status line entry, toasts as runs finish, and a /ci pane.",
   "types": "./types/index.d.ts",
   "userConfig": {
