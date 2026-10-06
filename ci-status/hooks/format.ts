@@ -180,20 +180,19 @@ export const statusText = (snapshot: Snapshot, now: number): string | undefined 
     return undefined
   }
 
-  const provider = snapshot.provider ?? 'GitHub'
-  const label = snapshot.pullRequest === null ? provider : `${provider} ${pullRequestLabel(snapshot)}`
+  const label = snapshot.pullRequest === null ? '' : pullRequestLabel(snapshot)
   const state = pullRequestState(snapshot)
-  const standing = state === '' ? '' : `  ${state}`
+  const joined = (...parts: string[]) => parts.filter(part => part !== '').join('  ')
 
   if (snapshot.checks.length === 0) {
-    return snapshot.pullRequest === null ? undefined : `${label}${standing}`
+    return snapshot.pullRequest === null ? undefined : joined(label, state)
   }
 
   if (isActive(snapshot.checks)) {
     const startedAt = runStartedAt(snapshot.checks)
     const elapsed = startedAt === null ? '' : ` ${formatElapsed(now - startedAt)}`
 
-    return `${label}  ${tallyText(snapshot.checks)}${elapsed}${standing}`
+    return joined(label, `${tallyText(snapshot.checks)}${elapsed}`, state)
   }
 
   const finishes = snapshot.checks.flatMap(check =>
@@ -207,7 +206,7 @@ export const statusText = (snapshot: Snapshot, now: number): string | undefined 
     return undefined
   }
 
-  return `${label}  ${tallyText(snapshot.checks)}${ago}${standing}`
+  return joined(label, `${tallyText(snapshot.checks)}${ago}`, state)
 }
 
 /**
