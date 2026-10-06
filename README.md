@@ -15,6 +15,8 @@ The mod is named `ci-status`. The command it adds is `/ci`.
   request stands, such as `approved, ready to merge` or `changes requested,
   merge blocked`. It hides itself when there is nothing to report, leaving
   the branch.
+  Both are added to the footer's mode labels, so another mod that draws there
+  keeps its place and the `CI:` entry follows it.
 - **Pane.** `/ci` opens a pane listing every check with its state and duration,
   each linked to its job page.
 - **Toasts.** One when a check newly fails, and one when the run finishes.
