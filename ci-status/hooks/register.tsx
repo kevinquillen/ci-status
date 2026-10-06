@@ -502,8 +502,8 @@ export const register: Register = (on, options) => {
     const color = state === null ? undefined : COLORS[state]
     const entry =
       cut < 0
-        ? [`CI: ${line}`]
-        : [`CI: ${line.slice(0, cut)}`, <Link href={href ?? ''}>{label}</Link>, line.slice(cut + label.length)]
+        ? [line]
+        : [line.slice(0, cut), <Link href={href ?? ''}>{label}</Link>, line.slice(cut + label.length)]
 
     return (
       <Box>
