@@ -479,6 +479,9 @@ export const register: Register = (on, options) => {
    * Adds to the footer's mode labels and never replaces them: the branch goes
    * down the chain as one more label, and the CI entry is drawn after
    * whatever the mods beneath and the engine made of them.
+   *
+   * The two sit side by side in a Box: what the engine draws itself comes back
+   * as an engine node, which is refused inside a Text.
    */
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const current = await read($, snapshot)
@@ -491,7 +494,7 @@ export const register: Register = (on, options) => {
       return beneath
     }
 
-    const { Link, Text } = $.ui.resolve(e)
+    const { Box, Link, Text } = $.ui.resolve(e)
     const href = safeHref(current.pullRequest?.url ?? null)
     const label = pullRequestLabel(current)
     const cut = href === null ? -1 : line.indexOf(label)
@@ -503,13 +506,13 @@ export const register: Register = (on, options) => {
         : [`CI: ${line.slice(0, cut)}`, <Link href={href ?? ''}>{label}</Link>, line.slice(cut + label.length)]
 
     return (
-      <Text wrap="truncate-end">
+      <Box>
         {beneath}
-        {modes.length > 0 && '  '}
-        <Text color={color} dimColor={color === undefined}>
+        {modes.length > 0 && <Text>{'  '}</Text>}
+        <Text wrap="truncate-end" color={color} dimColor={color === undefined}>
           {entry}
         </Text>
-      </Text>
+      </Box>
     )
   })
 
