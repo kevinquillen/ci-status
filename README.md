@@ -8,8 +8,8 @@ The mod is named `ci-status`. The command it adds is `/ci`.
 ## What it shows
 
 - **Footer entry.** The current branch (`Branch: main`) at the right of the
-  prompt footer, followed by a `CI:` entry with the linked pull request, a
-  tally such as `2/3 passed, 1 running`, and a timer. The `CI:` entry is red
+  prompt footer, followed by the linked pull request and a `CI:` entry with a
+  tally such as `2/3 passed, 1 running` and a timer. The entry is red
   when any check has failed, yellow while checks are running or queued, and
   green once they have passed. With a pull request it ends with where the pull
   request stands, such as `approved, ready to merge` or `changes requested,
