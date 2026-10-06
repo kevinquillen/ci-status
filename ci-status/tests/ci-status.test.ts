@@ -165,7 +165,8 @@ const fakeSession = (
 /** What the prompt footer shows: its text, and the link inside it if any. */
 const footer = async ($: Engine, modes: readonly string[] = ['focus']) => {
   const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes } })
-  const shown = { text: (await ui.find({ type: 'Text' }))?.text, link: await ui.find({ type: 'Link' }) }
+  const whole = (await ui.find({ type: 'Box' })) ?? (await ui.find({ type: 'Text' }))
+  const shown = { text: whole?.text, link: await ui.find({ type: 'Link' }) }
 
   await ui.unmount()
 
@@ -393,6 +394,20 @@ describe('footer entry', () => {
     await clock.advance(2000)
 
     expect((await footer($)).text).toMatch(/^weather: sunny {2}CI: GitHub .*2\/3 passed, 1 failed/)
+  })
+
+  test('draws beside the footer the engine draws itself', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+
+    fakeSession(on, { rollup: FINISHED })
+    on('ui.render', { component: 'SessionMode' }, () => ({ type: 'engine', ref: 0 }) as RenderElement)
+    await $.session.start(SESSION)
+    await clock.advance(2000)
+
+    const ui = await $.ui.mount({ plugin: 'ci-status', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
+
+    expect((await ui.find({ type: 'Text', text: /^CI: / }))?.text).toContain('2/3 passed, 1 failed')
+    await ui.unmount()
   })
 })
 
