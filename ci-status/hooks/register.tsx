@@ -475,28 +475,23 @@ export const register: Register = (on, options) => {
     return ran
   })
 
+  /**
+   * Adds to the footer's mode labels and never replaces them: the branch goes
+   * down the chain as one more label, and the CI entry is drawn after
+   * whatever the mods beneath and the engine made of them.
+   */
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const current = await read($, snapshot)
     const now = Math.max(await read($, clock), current.fetchedAt)
     const line = statusText(current, now)
-    const branch = current.branch === null ? '' : `Branch: ${current.branch}`
+    const modes = current.branch === null ? e.props.modes : [...e.props.modes, `Branch: ${current.branch}`]
+    const beneath = await next({ ...e, props: { ...e.props, modes } })
 
-    if (line === undefined && branch === '') {
-      return next(e)
+    if (line === undefined) {
+      return beneath
     }
 
     const { Link, Text } = $.ui.resolve(e)
-    const modes = e.props.modes.map(mode => `${mode} & `).join('')
-    const lead = `${modes}${branch}${line === undefined || branch === '' ? '' : '  '}`
-
-    if (line === undefined) {
-      return (
-        <Text dimColor wrap="truncate-end">
-          {lead}
-        </Text>
-      )
-    }
-
     const href = safeHref(current.pullRequest?.url ?? null)
     const label = pullRequestLabel(current)
     const cut = href === null ? -1 : line.indexOf(label)
@@ -509,7 +504,8 @@ export const register: Register = (on, options) => {
 
     return (
       <Text wrap="truncate-end">
-        {lead !== '' && <Text dimColor>{lead}</Text>}
+        {beneath}
+        {modes.length > 0 && '  '}
         <Text color={color} dimColor={color === undefined}>
           {entry}
         </Text>
