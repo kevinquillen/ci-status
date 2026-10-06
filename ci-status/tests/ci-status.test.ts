@@ -225,7 +225,7 @@ describe('footer entry', () => {
 
     const first = await footer($)
 
-    expect(first.text).toMatch(/^focus & Branch: feature {2}CI: GitHub .*PR #42 \(draft\)  1\/3 passed, 1 failed, 1 running 02:07$/)
+    expect(first.text).toMatch(/^focus & Branch: feature {2}CI: .*PR #42 \(draft\)  1\/3 passed, 1 failed, 1 running 02:07$/)
     expect(first.link?.text).toContain('PR #42 (draft)')
 
     await clock.advance(1000)
@@ -369,11 +369,11 @@ describe('footer entry', () => {
     fakeSession(on, github)
     await $.session.start(SESSION)
     await clock.advance(2000)
-    expect((await footer($, [])).text).toMatch(/^Branch: feature {2}CI: GitHub /)
+    expect((await footer($, [])).text).toMatch(/^Branch: feature {2}CI: /)
 
     github.branch = 'HEAD'
     await clock.advance(7000)
-    expect((await footer($, [])).text).toMatch(/^CI: GitHub /)
+    expect((await footer($, [])).text).toMatch(/^CI: /)
   })
 
   test('shows only the branch when gh cannot list runs for the commit', async ($, on) => {
@@ -393,7 +393,7 @@ describe('footer entry', () => {
     await $.session.start(SESSION)
     await clock.advance(2000)
 
-    expect((await footer($)).text).toMatch(/^weather: sunny {2}CI: GitHub .*2\/3 passed, 1 failed/)
+    expect((await footer($)).text).toMatch(/^weather: sunny {2}CI: .*2\/3 passed, 1 failed/)
   })
 
   test('draws beside the footer the engine draws itself', async ($, on) => {
@@ -433,7 +433,7 @@ describe('hiding', () => {
 
   test('shows nothing without a pull request or recent checks', async () => {
     expect(statusText(quiet, T0)).toBe(undefined)
-    expect(statusText({ ...quiet, checks: passed }, T0 + 5 * 60_000)).toBe('GitHub  1/1 passed 6m ago')
+    expect(statusText({ ...quiet, checks: passed }, T0 + 5 * 60_000)).toBe('1/1 passed 6m ago')
     expect(statusText({ ...quiet, checks: passed }, T0 + 60 * 60_000)).toBe(undefined)
   })
 
@@ -447,13 +447,13 @@ describe('hiding', () => {
     const approved = { ...quiet, pullRequest: { ...pullRequest, merge: 'ready', review: 'approved' } } as const
     const blocked = { ...quiet, pullRequest: { ...pullRequest, merge: 'blocked', review: 'changes requested' }, checks: passed } as const
 
-    expect(statusText(approved, T0)).toBe('GitHub PR #7  approved, ready to merge')
-    expect(statusText(blocked, T0 + 60 * 60_000)).toBe('GitHub PR #7  1/1 passed 1h ago  changes requested, merge blocked')
+    expect(statusText(approved, T0)).toBe('PR #7  approved, ready to merge')
+    expect(statusText(blocked, T0 + 60 * 60_000)).toBe('PR #7  1/1 passed 1h ago  changes requested, merge blocked')
   })
 
   test('keeps a pull request pinned even with no checks', async () => {
-    expect(statusText({ ...quiet, pullRequest }, T0)).toBe('GitHub PR #7')
-    expect(statusText({ ...quiet, pullRequest, checks: passed }, T0 + 60 * 60_000)).toBe('GitHub PR #7  1/1 passed 1h ago')
+    expect(statusText({ ...quiet, pullRequest }, T0)).toBe('PR #7')
+    expect(statusText({ ...quiet, pullRequest, checks: passed }, T0 + 60 * 60_000)).toBe('PR #7  1/1 passed 1h ago')
   })
 
   test('shows only the branch for a repository hosted elsewhere', async ($, on) => {
@@ -679,7 +679,7 @@ describe('drawing', () => {
 
     const shown = await footer($)
 
-    expect(shown.text).toMatch(/^focus & Branch: feature {2}CI: GitHub {2}1\/3 passed, 2 running /)
+    expect(shown.text).toMatch(/^focus & Branch: feature {2}CI: 1\/3 passed, 2 running /)
     expect(shown.link).toBe(undefined)
     expect(commands).toContain('gh run list --commit abc --limit 40 --json databaseId,workflowName,event,status,conclusion,startedAt,updatedAt,url')
     expect(commands).not.toContain('gh run view 9 --json jobs')
